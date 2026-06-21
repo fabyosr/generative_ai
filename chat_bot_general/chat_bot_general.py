@@ -9,7 +9,7 @@ from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
-model_class = 'hf_endpoint'
+model_class = 'ollama'
 api_key = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
 os.environ["HUGGINGFACEHUB_API_TOKEN"] = api_key
 
