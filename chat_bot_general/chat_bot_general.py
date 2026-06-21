@@ -17,7 +17,7 @@ os.environ["HUGGINGFACEHUB_API_TOKEN"] = api_key
 def model_hf(model='meta-llama/Meta-Llama-3-8B-Instruct', temperature=0.1):
   llm_endpoint = HuggingFaceEndpoint(repo_id=model,
                                      model_kwargs={
-                                         'temperature'=0.1
+                                         'temperature'=0.1,
                                          'return_full_text': False,
                                          'max_new_tokens': 512,
                                      })
