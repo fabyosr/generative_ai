@@ -1,0 +1,5 @@
+!pip install -q langchain
+!pip install -q langchain-community
+!pip install -q langchain-huggingface
+!pip install -q langchainhub
+!pip install langchain_openai
