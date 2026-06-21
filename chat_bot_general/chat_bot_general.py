@@ -2,7 +2,7 @@ import os
 import streamlit as st
 import torch
 
-from lagchain_core_messages import AIMessage, HumanMessage
+from langchain_core_messages import AIMessage, HumanMessage
 from langchain_core.prompts import MessagePlaceholder
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
