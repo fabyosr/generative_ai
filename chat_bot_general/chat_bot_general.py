@@ -76,7 +76,7 @@ for message in st.session_state.chat_history:
 user_query = st.chat_input('Digite sua mensagem aqui...')
 
 if user_query is not None and user_query.strip()!='':
-  st.session_state.chat_history.append(HumanMessage(content=user_qery))
+  st.session_state.chat_history.append(HumanMessage(content=user_query))
   with st.chat_message('Human'):
     st.markdown(user_query)
   with st.chat_message('Human'):
