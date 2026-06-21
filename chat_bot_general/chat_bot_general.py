@@ -66,7 +66,7 @@ if "chat_history" not in st.session_state:
   st.session_state.chat_history = [AIMessage(content='Oi, sou seu assistente virtual! Como poss ajudar você ?')]
 
 for message in st.session_state.chat_history:
-  if Instance(message, AIMessage):
+  if instance(message, AIMessage):
     with st.chat_message('AI'):
       st.write(message.content)
   elif Instance(message, HumanMessage):
