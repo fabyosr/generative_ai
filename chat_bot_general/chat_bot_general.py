@@ -3,8 +3,7 @@ import streamlit as st
 import torch
 
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import MessagePlaceholder
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_ollama import ChatOllama
