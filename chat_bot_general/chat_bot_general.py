@@ -1,6 +1,6 @@
 import os
 import streamlit as st
-import torch
+# import torch
 
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -13,6 +13,9 @@ model_class = 'ollama'
 api_key = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
 os.environ["HUGGINGFACEHUB_API_TOKEN"] = api_key
 
+st.set_page_config(page_title='Virtual Assistant 🤖', page_icon='🤖')
+st.title('Virtual Assistant 🤖')
+
 def model_hf(model='meta-llama/Meta-Llama-3-8B-Instruct', temperature=0.1):
   llm_endpoint = HuggingFaceEndpoint(repo_id=model,
                                      model_kwargs={
@@ -24,7 +27,7 @@ def model_hf(model='meta-llama/Meta-Llama-3-8B-Instruct', temperature=0.1):
   return llm_chat
 
 def model_openai(model='gpt-4o-mini', temperature=0.1):
-  llm_chat = ChatOpenAI(model_name=model, temperature=temperature)
+  llm_chat = ChatOpenAI(model=model, temperature=temperature)
   return llm_chat
 
 def model_ollama(model='phi-3', temperature=0.1):
@@ -77,6 +80,7 @@ user_query = st.chat_input('Digite sua mensagem aqui...')
 
 if user_query is not None and user_query.strip()!='':
   st.session_state.chat_history.append(HumanMessage(content=user_query))
+  
   with st.chat_message('Human'):
     st.markdown(user_query)
 
