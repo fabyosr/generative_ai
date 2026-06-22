@@ -51,6 +51,10 @@ def model_response(user_query, chat_history, model_class):
   else:
     user_prompt = "{input}"
 
+  st.write(user_query)
+  st.write(chat_history)
+  st.write(user_prompt)
+
   prompt_template = ChatPromptTemplate.from_messages(
       [
           ("system", system_prompt),
@@ -85,6 +89,6 @@ if user_query is not None and user_query.strip()!='':
     st.markdown(user_query)
 
   with st.chat_message('AI'):
-    resp = st.write(model_response(user_query, st.session_state.chat_history, model_class))
+    resp = st.write_stream(model_response(user_query, st.session_state.chat_history, model_class))
         
   st.session_state.chat_history.append(AIMessage(content=resp))
