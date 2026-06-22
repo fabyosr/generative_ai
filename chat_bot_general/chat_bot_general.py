@@ -80,11 +80,11 @@ user_query = st.chat_input('Digite sua mensagem aqui...')
 
 if user_query is not None and user_query.strip()!='':
   st.session_state.chat_history.append(HumanMessage(content=user_query))
-  
+
   with st.chat_message('Human'):
     st.markdown(user_query)
 
   with st.chat_message('AI'):
-    resp = st.write_stream(model_response(user_query, st.session_state.chat_history, model_class))
+    resp = st.write(model_response(user_query, st.session_state.chat_history, model_class))
         
   st.session_state.chat_history.append(AIMessage(content=resp))
