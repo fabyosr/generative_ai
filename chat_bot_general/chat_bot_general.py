@@ -54,7 +54,7 @@ def model_response(user_query, chat_history, model_class):
   prompt_template = ChatPromptTemplate.from_messages(
       [
           ("system", system_prompt),
-          MessagePlaceholder(variable_name="chat_history"),
+          MessagesPlaceholder(variable_name="chat_history"),
           ("user", user_prompt),
       ]
   )
