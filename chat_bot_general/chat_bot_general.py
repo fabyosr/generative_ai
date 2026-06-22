@@ -18,9 +18,9 @@ st.title('Virtual Assistant 🤖')
 
 def model_hf(model='meta-llama/Meta-Llama-3-8B-Instruct', temperature=0.1):
   llm_endpoint = HuggingFaceEndpoint(repo_id=model,
-                                     'temperature'=temperature,
-                                     'return_full_text'= False,
-                                     'max_new_tokens'=512,
+                                     temperature=temperature,
+                                     return_full_text= False,
+                                     max_new_tokens=512,
                                      )
   llm_chat = ChatHuggingFace(llm=llm_endpoint)
   return llm_chat
