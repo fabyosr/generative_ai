@@ -74,7 +74,7 @@ with st.sidebar:
         col1, col2 = st.columns(2)
         with col1:
             st.metric(label="📥 Input Tokens", value=st.session_state.metrics["last_input_tokens"])
-            st.metric(label="⏱️ Latência", value=f"{st.session_state.metrics['latency']:.2s}s" if st.session_state.metrics['latency'] > 0 else "0.0s")
+            st.metric(label="⏱️ Latência", value=f"{st.session_state.metrics['latency']:.2}s" if st.session_state.metrics['latency'] > 0 else "0.0s")
         with col2:
             st.metric(label="📤 Output Tokens", value=st.session_state.metrics["last_output_tokens"])
             st.metric(label="⚡ Velocidade", value=f"{st.session_state.metrics['tokens_per_sec']:.1f} t/s" if st.session_state.metrics['tokens_per_sec'] > 0 else "0/s")
