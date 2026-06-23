@@ -71,7 +71,8 @@ with st.sidebar:
     model_class = st.selectbox(
         "Selecione o Provedor de LLM:",
         options=['openai', 'ollama', 'hf_endpoint'],
-        format_func=lambda x: "OpenAI (GPT-4o-mini)" if x == 'openai' else "Ollama (Phi-3)" if x == 'ollama' else "HuggingFace (Llama 3)"
+        format_func=lambda x: "HuggingFace (Llama 3)" if x == 'hf_endpoint' else "OpenAI (GPT-4o)" if x == 'openai' else "Ollama (Phi-3)"
+        # format_func=lambda x: "OpenAI (GPT-4o-mini)" if x == 'openai' else "Ollama (Phi-3)" if x == 'ollama' else "HuggingFace (Llama 3)"
     )
     
     temperature = st.slider("Criatividade (Temperature):", min_value=0.0, max_value=1.0, value=0.1, step=0.1)
