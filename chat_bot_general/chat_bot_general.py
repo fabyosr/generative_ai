@@ -206,9 +206,22 @@ if user_query and user_query.strip():
     call_cost = ((final_input_tokens / 1_000_000) * 0.15) + ((final_output_tokens / 1_000_000) * 0.60)
     st.session_state.accumulated_cost += call_cost
 
-    # Salva no estado
+    # Salva no estado o histórico para o gráfico de linha
     st.session_state.latency_history.append(latency)
+    
+    # Atualização do dicionário de métricas gerais com os novos metadados coletados
     st.session_state.metrics = {
         "last_input_tokens": final_input_tokens,
         "last_output_tokens": final_output_tokens,
         "latency": latency,
+        "tokens_per_sec": tokens_per_second,
+        "finish_reason": str(finish_reason),
+        "system_fingerprint": str(system_fingerprint),
+        "reasoning_tokens": reasoning_tokens
+    }
+    
+    # Adiciona a resposta final da IA à memória do chat para manter o contexto
+    st.session_state.chat_history.append(AIMessage(content=full_response))
+    
+    # Força a atualização reativa da tela para redesenhar o gráfico e atualizar os kpis da sidebar
+    st.rerun()
