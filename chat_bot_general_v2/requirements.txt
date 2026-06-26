@@ -4,9 +4,14 @@ langchain-huggingface
 langchainhub
 langchain_openai
 langchain_ollama
+
 # ── Guardrails ──────────────────────────────────────────────
 better-profanity==0.7.0
-detoxify==0.5.2        # puxa torch como dependência — maior pacote do projeto
+detoxify==0.5.2
+
+# Versão do transformers compatível com detoxify 0.5.2
+transformers==4.30.2
+torch==2.0.1
 
 # ── Já usado indiretamente mas bom fixar explicitamente ─────
 requests>=2.31.0       # usado no _check_llamaguard para chamar a HF Inference API
