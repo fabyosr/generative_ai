@@ -13,3 +13,5 @@ requests>=2.31.0       # usado no _check_llamaguard para chamar a HF Inference A
 
 # ── Utilitários novos usados no projeto ─────────────────────
 pandas>=2.0.0          # já era usado, mas não estava declarado
+
+scikit-learn
