@@ -8,6 +8,8 @@ Toda a lógica está em: config.py | llm_factory.py | chat_chain.py | metrics.py
 
 import os
 import time
+from datetime import datetime, timezone
+from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
@@ -19,9 +21,11 @@ from metrics import (
     StreamMetadata,
     apply_token_fallback,
     build_metrics_dict,
+    build_turn_record,
     calculate_cost,
     count_history_messages,
     estimate_history_tokens,
+    turn_log_to_dataframe,
 )
 
 # ===========================================================================
@@ -30,7 +34,7 @@ from metrics import (
 st.set_page_config(
     page_title="Virtual Assistant 🤖",
     page_icon="🤖",
-    layout="centered",
+    layout="wide",          # wide para a tabela respirar
 )
 
 st.markdown("""
@@ -46,6 +50,8 @@ st.markdown("""
             margin-bottom: 25px;
         }
         [data-testid="stMetricValue"] { font-size: 20px !important; font-weight: bold; }
+        /* Célula da tabela não quebra linha desnecessariamente */
+        [data-testid="stDataFrame"] td { white-space: nowrap; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -65,6 +71,10 @@ def _init_session_state() -> None:
         except Exception:
             st.warning("Token do HuggingFace não encontrado.")
 
+    if "id_session" not in st.session_state:
+        # UUID estável durante toda a sessão; reseta só no "Limpar Tudo"
+        st.session_state.id_session = str(uuid4())
+
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = [
             AIMessage(content="Oi, sou seu assistente virtual! Como posso ajudar você?")
@@ -79,6 +89,10 @@ def _init_session_state() -> None:
     if "latency_history" not in st.session_state:
         st.session_state.latency_history = []
 
+    if "turn_log" not in st.session_state:
+        # Lista de TurnRecord — append a cada resposta, nunca reescrita
+        st.session_state.turn_log = []
+
 
 _init_session_state()
 
@@ -87,13 +101,8 @@ _init_session_state()
 # 3. SIDEBAR — CONTROLES E DASHBOARD
 # ===========================================================================
 def _render_sidebar() -> tuple[str, str, float]:
-    """
-    Renderiza a sidebar e retorna as escolhas do usuário.
+    """Renderiza a sidebar e retorna (personality_key, provider_key, temperature)."""
 
-    Retorna
-    -------
-    (personality_key, provider_key, temperature)
-    """
     with st.sidebar:
         st.header("⚙️ Painel de Controle")
 
@@ -129,51 +138,50 @@ def _render_sidebar() -> tuple[str, str, float]:
             m = st.session_state.metrics
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("📥 Input Tokens",       m["last_input_tokens"])
-                st.metric("⏱️ Latência",            f"{m['latency']:.2f}s")
-                st.metric("🧠 Tokens de Raciocínio", m["reasoning_tokens"])
+                st.metric("📥 Input Tokens",        m["last_input_tokens"])
+                st.metric("⏱️ Latência",             f"{m['latency']:.2f}s")
+                st.metric("🧠 Tokens Raciocínio",    m["reasoning_tokens"])
             with col2:
-                st.metric("📤 Output Tokens",  m["last_output_tokens"])
-                st.metric("⚡ Velocidade",      f"{m['tokens_per_sec']:.1f} t/s")
-                st.metric("🛑 Fim do Stream",   m["finish_reason"])
+                st.metric("📤 Output Tokens",   m["last_output_tokens"])
+                st.metric("⚡ Velocidade",       f"{m['tokens_per_sec']:.1f} t/s")
+                st.metric("🛑 Fim do Stream",    m["finish_reason"])
 
-        # ── Janela de Contexto (NOVA FEATURE) ───────────────────────────────
+        # ── Janela de Contexto ───────────────────────────────────────────────
         with st.expander("🧠 Janela de Contexto Atual", expanded=True):
-            history = st.session_state.chat_history
+            history      = st.session_state.chat_history
             ctx_tokens   = estimate_history_tokens(history)
             ctx_messages = count_history_messages(history)
-
             col1, col2 = st.columns(2)
             with col1:
                 st.metric(
-                    label="💬 Mensagens no Histórico",
-                    value=ctx_messages,
+                    "💬 Mensagens no Histórico", ctx_messages,
                     help="Total de mensagens (usuário + assistente) na memória do chat.",
                 )
             with col2:
                 st.metric(
-                    label="🔢 Tokens Acumulados",
-                    value=ctx_tokens,
+                    "🔢 Tokens Acumulados", ctx_tokens,
                     help="Estimativa de tokens enviados ao modelo via MessagesPlaceholder (chars ÷ 4).",
                 )
 
         # ── Histórico de Latência ────────────────────────────────────────────
         with st.expander("📈 Histórico de Latência", expanded=True):
             if st.session_state.latency_history:
-                df = pd.DataFrame(st.session_state.latency_history, columns=["Latência (s)"])
-                st.line_chart(df, height=120)
+                df_lat = pd.DataFrame(
+                    st.session_state.latency_history, columns=["Latência (s)"]
+                )
+                st.line_chart(df_lat, height=120)
                 st.caption(f"Fingerprint: {st.session_state.metrics['system_fingerprint']}")
             else:
                 st.caption("Envie mensagens para mapear a latência.")
 
         # ── Reset ────────────────────────────────────────────────────────────
         if st.button("Limpar Tudo", use_container_width=True):
-            st.session_state.chat_history = [
-                AIMessage(content="Oi! Tudo reiniciado. Como posso ajudar?")
-            ]
-            st.session_state.metrics         = DEFAULT_METRICS.copy()
+            st.session_state.chat_history     = [AIMessage(content="Oi! Tudo reiniciado. Como posso ajudar?")]
+            st.session_state.metrics          = DEFAULT_METRICS.copy()
             st.session_state.accumulated_cost = 0.0
             st.session_state.latency_history  = []
+            st.session_state.turn_log         = []
+            st.session_state.id_session       = str(uuid4())   # nova sessão
             st.rerun()
 
     return personality, provider, temperature
@@ -183,78 +191,173 @@ personality_key, provider_key, temperature = _render_sidebar()
 
 
 # ===========================================================================
-# 4. RENDERIZAÇÃO DO HISTÓRICO DE CHAT
+# 4. TABS PRINCIPAIS
 # ===========================================================================
-def _render_chat_history() -> None:
+tab_chat, tab_log = st.tabs(["💬 Chat", "📋 Log de Observabilidade"])
+
+
+# ===========================================================================
+# 5. TAB CHAT — histórico e input
+# ===========================================================================
+with tab_chat:
+
+    # ── Renderização do histórico ────────────────────────────────────────────
     for message in st.session_state.chat_history:
-        is_ai   = isinstance(message, AIMessage)
-        role    = "assistant" if is_ai else "user"
-        avatar  = "🤖" if is_ai else "👤"
+        is_ai  = isinstance(message, AIMessage)
+        role   = "assistant" if is_ai else "user"
+        avatar = "🤖" if is_ai else "👤"
         with st.chat_message(role, avatar=avatar):
             st.markdown(message.content)
 
+    # ── Input e processamento ────────────────────────────────────────────────
+    user_query = st.chat_input("Digite sua mensagem aqui...")
 
-_render_chat_history()
+    if user_query and user_query.strip():
+        user_ts = datetime.now(timezone.utc)
+
+        # Exibe mensagem do usuário imediatamente
+        st.session_state.chat_history.append(HumanMessage(content=user_query))
+        with st.chat_message("user", avatar="👤"):
+            st.markdown(user_query)
+
+        # ── Stream da resposta ───────────────────────────────────────────────
+        with st.chat_message("assistant", avatar="🤖"):
+            placeholder   = st.empty()
+            full_response = ""
+            stream_meta   = StreamMetadata()
+
+            start_time = time.time()
+
+            stream = build_stream(
+                user_query    = user_query,
+                chat_history  = st.session_state.chat_history,
+                provider      = provider_key,
+                temperature   = temperature,
+                system_prompt = PERSONALITIES[personality_key],
+            )
+
+            for chunk in stream:
+                if chunk.content:
+                    full_response += chunk.content
+                    placeholder.markdown(full_response + "▌")
+                stream_meta.update_from_chunk(chunk)
+
+            end_time = time.time()
+            llm_ts   = datetime.now(timezone.utc)
+            placeholder.markdown(full_response)
+
+        # ── Pós-processamento ────────────────────────────────────────────────
+        latency = end_time - start_time
+
+        stream_meta = apply_token_fallback(stream_meta, user_query, full_response)
+
+        call_cost = calculate_cost(stream_meta.input_tokens, stream_meta.output_tokens)
+        st.session_state.accumulated_cost += call_cost
+        st.session_state.latency_history.append(latency)
+        st.session_state.metrics = build_metrics_dict(stream_meta, latency, full_response)
+
+        # ── Registra o TurnRecord ────────────────────────────────────────────
+        turn = build_turn_record(
+            turn_number   = len(st.session_state.turn_log) + 1,
+            id_session    = st.session_state.id_session,
+            meta          = stream_meta,
+            provider      = provider_key,
+            model_label   = LLM_PROVIDERS[provider_key],
+            personality   = personality_key,
+            temperature   = temperature,
+            user_query    = user_query,
+            user_ts       = user_ts,
+            llm_ts        = llm_ts,
+            full_response = full_response,
+            latency       = latency,
+        )
+        st.session_state.turn_log.append(turn)
+
+        # Salva resposta no histórico e força re-render
+        st.session_state.chat_history.append(AIMessage(content=full_response))
+        st.rerun()
 
 
 # ===========================================================================
-# 5. PROCESSAMENTO DA MENSAGEM DO USUÁRIO
+# 6. TAB LOG DE OBSERVABILIDADE
 # ===========================================================================
-def _process_user_message(user_query: str) -> None:
-    """Executa o stream, coleta métricas e atualiza o session_state."""
+with tab_log:
+    st.subheader("📋 Log de Observabilidade por Turno")
 
-    # Adiciona mensagem do usuário ao histórico e exibe imediatamente
-    st.session_state.chat_history.append(HumanMessage(content=user_query))
-    with st.chat_message("user", avatar="👤"):
-        st.markdown(user_query)
+    turn_log = st.session_state.turn_log
 
-    # ── Streaming da resposta ────────────────────────────────────────────────
-    with st.chat_message("assistant", avatar="🤖"):
-        placeholder  = st.empty()
-        full_response = ""
-        stream_meta   = StreamMetadata()
+    if not turn_log:
+        st.info("Nenhuma interação registrada ainda. Envie uma mensagem na aba Chat.")
+    else:
+        df = turn_log_to_dataframe(turn_log)
 
-        start_time = time.time()
+        # ── KPIs resumidos no topo da aba ───────────────────────────────────
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("🔁 Turnos",           len(turn_log))
+        k2.metric("📥 Total Input Tok",  int(df["Tokens Input LLM"].sum()))
+        k3.metric("📤 Total Output Tok", int(df["Tokens Output LLM"].sum()))
+        k4.metric("⏱️ Latência Média",   f"{df['Latência (s)'].mean():.2f}s")
+        k5.metric("💰 Custo Total",      f"USD {df['Custo Turno (USD)'].sum():.5f}")
 
-        stream = build_stream(
-            user_query   = user_query,
-            chat_history = st.session_state.chat_history,
-            provider     = provider_key,
-            temperature  = temperature,
-            system_prompt= PERSONALITIES[personality_key],
+        st.markdown("---")
+
+        # ── Filtros rápidos ──────────────────────────────────────────────────
+        with st.expander("🔍 Filtros", expanded=False):
+            col_f1, col_f2, col_f3 = st.columns(3)
+
+            providers_disponiveis = df["Provedor"].unique().tolist()
+            filtro_provider = col_f1.multiselect(
+                "Provedor", providers_disponiveis, default=providers_disponiveis
+            )
+
+            personalities_disponiveis = df["Personalidade"].unique().tolist()
+            filtro_personality = col_f2.multiselect(
+                "Personalidade", personalities_disponiveis, default=personalities_disponiveis
+            )
+
+            lat_min, lat_max = float(df["Latência (s)"].min()), float(df["Latência (s)"].max())
+            if lat_min < lat_max:
+                filtro_latencia = col_f3.slider(
+                    "Latência máxima (s)", lat_min, lat_max, lat_max, step=0.1
+                )
+            else:
+                filtro_latencia = lat_max
+
+            df_filtrado = df[
+                df["Provedor"].isin(filtro_provider)
+                & df["Personalidade"].isin(filtro_personality)
+                & (df["Latência (s)"] <= filtro_latencia)
+            ]
+
+        # ── Tabela principal ─────────────────────────────────────────────────
+        st.dataframe(
+            df_filtrado,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "# Turno":            st.column_config.NumberColumn(width="small"),
+                "ID Sessão":          st.column_config.TextColumn(width="medium"),
+                "ID Mensagem":        st.column_config.TextColumn(width="medium"),
+                "Mensagem Usuário":   st.column_config.TextColumn(width="large"),
+                "Resposta LLM":       st.column_config.TextColumn(width="large"),
+                "Latência (s)":       st.column_config.NumberColumn(format="%.3f", width="small"),
+                "Tokens/s":           st.column_config.NumberColumn(format="%.1f",  width="small"),
+                "Custo Turno (USD)":  st.column_config.NumberColumn(format="%.6f", width="small"),
+                "Temperature":        st.column_config.NumberColumn(format="%.1f",  width="small"),
+            },
         )
 
-        for chunk in stream:
-            if chunk.content:
-                full_response += chunk.content
-                placeholder.markdown(full_response + "▌")
-            stream_meta.update_from_chunk(chunk)
+        st.caption(
+            f"Exibindo {len(df_filtrado)} de {len(df)} turnos  •  "
+            f"ID Sessão atual: `{st.session_state.id_session}`"
+        )
 
-        end_time = time.time()
-        placeholder.markdown(full_response)   # remove cursor de digitação
-
-    # ── Pós-processamento de métricas ────────────────────────────────────────
-    latency = end_time - start_time
-
-    stream_meta = apply_token_fallback(stream_meta, user_query, full_response)
-
-    call_cost = calculate_cost(stream_meta.input_tokens, stream_meta.output_tokens)
-    st.session_state.accumulated_cost += call_cost
-
-    st.session_state.latency_history.append(latency)
-    st.session_state.metrics = build_metrics_dict(stream_meta, latency, full_response)
-
-    # ── Salva resposta no histórico ──────────────────────────────────────────
-    st.session_state.chat_history.append(AIMessage(content=full_response))
-
-    # Força re-render para atualizar gráfico e KPIs da sidebar
-    st.rerun()
-
-
-# ===========================================================================
-# 6. INPUT DO USUÁRIO
-# ===========================================================================
-user_query = st.chat_input("Digite sua mensagem aqui...")
-
-if user_query and user_query.strip():
-    _process_user_message(user_query)
+        # ── Export CSV ───────────────────────────────────────────────────────
+        csv_bytes = df_filtrado.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="⬇️ Exportar CSV",
+            data=csv_bytes,
+            file_name=f"observabilidade_{st.session_state.id_session[:8]}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
