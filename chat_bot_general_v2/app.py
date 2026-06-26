@@ -16,6 +16,14 @@ import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 
 from chat_chain import build_stream
+from guardrails import (
+    GuardrailResult,
+    GuardrailLayer,
+    check_input,
+    check_output,
+    BLOCK_MESSAGE_INPUT,
+    BLOCK_MESSAGE_OUTPUT,
+)
 from config import DEFAULT_METRICS, LLM_PROVIDERS, PERSONALITIES
 from metrics import (
     StreamMetadata,
@@ -174,6 +182,40 @@ def _render_sidebar() -> tuple[str, str, float]:
             else:
                 st.caption("Envie mensagens para mapear a latência.")
 
+        # ── Status Guardrails ────────────────────────────────────────────────
+        with st.expander("🛡️ Status dos Guardrails", expanded=False):
+            log = st.session_state.turn_log
+            if not log:
+                st.caption("Nenhum turno registrado ainda.")
+            else:
+                total       = len(log)
+                inp_blocked = sum(1 for t in log if t.input_flagged)
+                out_blocked = sum(1 for t in log if t.output_flagged)
+                col1, col2, col3 = st.columns(3)
+                col1.metric("🔁 Turnos",          total)
+                col2.metric("🚫 Input Bloqueado",  inp_blocked)
+                col3.metric("🚫 Output Bloqueado", out_blocked)
+
+                # Últimas detecções
+                flagged_turns = [t for t in log if t.input_flagged or t.output_flagged]
+                if flagged_turns:
+                    st.markdown("**Últimas detecções:**")
+                    for t in flagged_turns[-3:]:
+                        if t.input_flagged:
+                            st.warning(
+                                f"Turno {t.turn_number} · Input · "
+                                f"{t.input_gr_layer} · {t.input_gr_category} "
+                                f"({t.input_gr_score:.2f})",
+                                icon="🚫",
+                            )
+                        if t.output_flagged:
+                            st.warning(
+                                f"Turno {t.turn_number} · Output · "
+                                f"{t.output_gr_layer} · {t.output_gr_category} "
+                                f"({t.output_gr_score:.2f})",
+                                icon="🚫",
+                            )
+
         # ── Reset ────────────────────────────────────────────────────────────
         if st.button("Limpar Tudo", use_container_width=True):
             st.session_state.chat_history     = [AIMessage(content="Oi! Tudo reiniciado. Como posso ajudar?")]
@@ -220,6 +262,38 @@ with tab_chat:
         with st.chat_message("user", avatar="👤"):
             st.markdown(user_query)
 
+        # ── Guardrail INPUT ──────────────────────────────────────────────────
+        input_gr = check_input(user_query)
+
+        if not input_gr.safe:
+            with st.chat_message("assistant", avatar="🤖"):
+                st.warning(BLOCK_MESSAGE_INPUT)
+
+            # Registra o turno bloqueado sem chamar a LLM
+            _safe_gr = __import__("guardrails").GuardrailResult(
+                safe=True, layer=__import__("guardrails").GuardrailLayer.NONE,
+                category="safe", score=0.0, reason="",
+            )
+            turn = build_turn_record(
+                turn_number      = len(st.session_state.turn_log) + 1,
+                id_session       = st.session_state.id_session,
+                meta             = StreamMetadata(),
+                provider         = provider_key,
+                model_label      = LLM_PROVIDERS[provider_key],
+                personality      = personality_key,
+                temperature      = temperature,
+                user_query       = user_query,
+                user_ts          = user_ts,
+                llm_ts           = user_ts,
+                full_response    = BLOCK_MESSAGE_INPUT,
+                latency          = 0.0,
+                input_gr_result  = input_gr,
+                output_gr_result = _safe_gr,
+            )
+            st.session_state.turn_log.append(turn)
+            st.session_state.chat_history.append(AIMessage(content=BLOCK_MESSAGE_INPUT))
+            st.rerun()
+
         # ── Stream da resposta ───────────────────────────────────────────────
         with st.chat_message("assistant", avatar="🤖"):
             placeholder   = st.empty()
@@ -244,7 +318,14 @@ with tab_chat:
 
             end_time = time.time()
             llm_ts   = datetime.now(timezone.utc)
-            placeholder.markdown(full_response)
+
+            # ── Guardrail OUTPUT ─────────────────────────────────────────────
+            output_gr = check_output(full_response)
+            if not output_gr.safe:
+                placeholder.warning(BLOCK_MESSAGE_OUTPUT)
+                full_response = BLOCK_MESSAGE_OUTPUT
+            else:
+                placeholder.markdown(full_response)
 
         # ── Pós-processamento ────────────────────────────────────────────────
         latency = end_time - start_time
@@ -256,20 +337,22 @@ with tab_chat:
         st.session_state.latency_history.append(latency)
         st.session_state.metrics = build_metrics_dict(stream_meta, latency, full_response)
 
-        # ── Registra o TurnRecord ────────────────────────────────────────────
+        # ── Registra o TurnRecord com auditoria de guardrails ────────────────
         turn = build_turn_record(
-            turn_number   = len(st.session_state.turn_log) + 1,
-            id_session    = st.session_state.id_session,
-            meta          = stream_meta,
-            provider      = provider_key,
-            model_label   = LLM_PROVIDERS[provider_key],
-            personality   = personality_key,
-            temperature   = temperature,
-            user_query    = user_query,
-            user_ts       = user_ts,
-            llm_ts        = llm_ts,
-            full_response = full_response,
-            latency       = latency,
+            turn_number      = len(st.session_state.turn_log) + 1,
+            id_session       = st.session_state.id_session,
+            meta             = stream_meta,
+            provider         = provider_key,
+            model_label      = LLM_PROVIDERS[provider_key],
+            personality      = personality_key,
+            temperature      = temperature,
+            user_query       = user_query,
+            user_ts          = user_ts,
+            llm_ts           = llm_ts,
+            full_response    = full_response,
+            latency          = latency,
+            input_gr_result  = input_gr,
+            output_gr_result = output_gr,
         )
         st.session_state.turn_log.append(turn)
 
@@ -344,6 +427,10 @@ with tab_log:
                 "Tokens/s":           st.column_config.NumberColumn(format="%.1f",  width="small"),
                 "Custo Turno (USD)":  st.column_config.NumberColumn(format="%.6f", width="small"),
                 "Temperature":        st.column_config.NumberColumn(format="%.1f",  width="small"),
+                "Input Bloqueado":    st.column_config.TextColumn(width="small"),
+                "Input GR Score":     st.column_config.NumberColumn(format="%.3f",  width="small"),
+                "Output Bloqueado":   st.column_config.TextColumn(width="small"),
+                "Output GR Score":    st.column_config.NumberColumn(format="%.3f",  width="small"),
             },
         )
 

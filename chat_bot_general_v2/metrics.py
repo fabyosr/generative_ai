@@ -12,12 +12,15 @@ Nenhuma dependência de Streamlit → 100 % testável de forma isolada.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from uuid import uuid4
 
 from langchain_core.messages import BaseMessage
 
 from config import DEFAULT_METRICS, PRICING
+
+if TYPE_CHECKING:
+    from guardrails import GuardrailResult
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +101,16 @@ class TurnRecord:
     # Custo
     turn_cost_usd:      float
 
+    # Auditoria de guardrails
+    input_flagged:      bool    # input foi bloqueado?
+    input_gr_layer:     str     # camada que decidiu (profanity/detoxify/llamaguard/none)
+    input_gr_category:  str     # categoria detectada
+    input_gr_score:     float   # score de confiança
+    output_flagged:     bool    # output foi bloqueado?
+    output_gr_layer:    str
+    output_gr_category: str
+    output_gr_score:    float
+
 
 # ---------------------------------------------------------------------------
 # Funções utilitárias — sem efeitos colaterais
@@ -146,18 +159,20 @@ def build_metrics_dict(
 
 def build_turn_record(
     *,
-    turn_number:    int,
-    id_session:     str,
-    meta:           StreamMetadata,
-    provider:       str,
-    model_label:    str,
-    personality:    str,
-    temperature:    float,
-    user_query:     str,
-    user_ts:        datetime,
-    llm_ts:         datetime,
-    full_response:  str,
-    latency:        float,
+    turn_number:      int,
+    id_session:       str,
+    meta:             StreamMetadata,
+    provider:         str,
+    model_label:      str,
+    personality:      str,
+    temperature:      float,
+    user_query:       str,
+    user_ts:          datetime,
+    llm_ts:           datetime,
+    full_response:    str,
+    latency:          float,
+    input_gr_result,               # GuardrailResult
+    output_gr_result,              # GuardrailResult
 ) -> TurnRecord:
     """
     Constrói o TurnRecord completo após o fim do stream.
@@ -191,6 +206,14 @@ def build_turn_record(
         finish_reason        = meta.finish_reason,
         system_fingerprint   = meta.system_fingerprint,
         turn_cost_usd        = turn_cost,
+        input_flagged        = not input_gr_result.safe,
+        input_gr_layer       = input_gr_result.layer.value,
+        input_gr_category    = input_gr_result.category,
+        input_gr_score       = input_gr_result.score,
+        output_flagged       = not output_gr_result.safe,
+        output_gr_layer      = output_gr_result.layer.value,
+        output_gr_category   = output_gr_result.category,
+        output_gr_score      = output_gr_result.score,
     )
 
 
@@ -230,6 +253,15 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
             "System Fingerprint":   t.system_fingerprint,
             # Custo
             "Custo Turno (USD)":    round(t.turn_cost_usd, 6),
+            # Guardrails — auditoria
+            "Input Bloqueado":      "🚫 Sim" if t.input_flagged  else "✅ Ok",
+            "Input GR Layer":       t.input_gr_layer,
+            "Input GR Categoria":   t.input_gr_category,
+            "Input GR Score":       round(t.input_gr_score, 3),
+            "Output Bloqueado":     "🚫 Sim" if t.output_flagged else "✅ Ok",
+            "Output GR Layer":      t.output_gr_layer,
+            "Output GR Categoria":  t.output_gr_category,
+            "Output GR Score":      round(t.output_gr_score, 3),
         })
 
     df = pd.DataFrame(rows)
@@ -237,7 +269,7 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
     # Garante tipos numéricos corretos para ordenação e filtros
     int_cols = ["# Turno", "Tokens Usuário", "Tokens Input LLM",
                 "Tokens Output LLM", "Tokens Raciocínio"]
-    float_cols = ["Temperature", "Latência (s)", "Tokens/s", "Custo Turno (USD)"]
+    float_cols = ["Temperature", "Latência (s)", "Tokens/s", "Custo Turno (USD)", "Input GR Score", "Output GR Score"]
     for c in int_cols:
         df[c] = df[c].astype(int)
     for c in float_cols:

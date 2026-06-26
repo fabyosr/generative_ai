@@ -41,6 +41,16 @@ PRICING = {
 }
 
 # ---------------------------------------------------------------------------
+# Guardrails — thresholds e comportamento (espelha guardrails.py para UI)
+# ---------------------------------------------------------------------------
+GUARDRAIL_DETOXIFY_BLOCK:  float = 0.70   # bloqueia direto
+GUARDRAIL_DETOXIFY_REVIEW: float = 0.40   # zona cinza → escala para LlamaGuard
+
+# Mensagens exibidas ao usuário quando bloqueado
+GUARDRAIL_MSG_INPUT  = "⚠️ Sua mensagem foi bloqueada por violar as diretrizes de uso."
+GUARDRAIL_MSG_OUTPUT = "⚠️ A resposta foi bloqueada por conter conteúdo inadequado."
+
+# ---------------------------------------------------------------------------
 # Valores iniciais do dicionário de métricas de resposta
 # ---------------------------------------------------------------------------
 DEFAULT_METRICS: dict = {
