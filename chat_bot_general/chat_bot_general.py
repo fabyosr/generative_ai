@@ -47,8 +47,7 @@ if "metrics" not in st.session_state:
         "tokens_per_sec": 0.0,
         "finish_reason": "N/A",
         "system_fingerprint": "N/A",
-        "reasoning_tokens": 0,
-        "history_tokens":0,
+        "reasoning_tokens": 0
     }
 
 if "accumulated_cost" not in st.session_state:
@@ -99,11 +98,6 @@ with st.sidebar:
             st.metric(label="📤 Output Tokens", value=st.session_state.metrics["last_output_tokens"])
             st.metric(label="⚡ Velocidade", value=f"{st.session_state.metrics['tokens_per_sec']:.1f} t/s")
             st.metric(label="🛑 Fim do Stream", value=st.session_state.metrics["finish_reason"])
-
-    with st.expander("🧠 Janela de Contexto Total"):
-        total_msg = len(st.session_state.get("chat_history", []))
-        st.metric(label="💬 Mensagens no Histórico", value=total_msg)
-        st.metric(label="📚 Tokens Acumulados", value=st.session_state.metrics["history_tokens"])
             
     with st.expander("📈 Histórico de Latência", expanded=True):
         if st.session_state.latency_history:
@@ -115,7 +109,7 @@ with st.sidebar:
 
     if st.button("Limpar Tudo", use_container_width=True):
         st.session_state.chat_history = [AIMessage(content='Oi! Tudo reiniciado. Como posso ajudar?')]
-        st.session_state.metrics = {"last_input_tokens": 0, "last_output_tokens": 0, "latency": 0.0, "tokens_per_sec": 0.0, "finish_reason": "N/A", "system_fingerprint": "N/A", "reasoning_tokens": 0, "history_tokens":0,}
+        st.session_state.metrics = {"last_input_tokens": 0, "last_output_tokens": 0, "latency": 0.0, "tokens_per_sec": 0.0, "finish_reason": "N/A", "system_fingerprint": "N/A", "reasoning_tokens": 0}
         st.session_state.accumulated_cost = 0.0
         st.session_state.latency_history = []
         st.rerun()
@@ -203,8 +197,7 @@ if user_query and user_query.strip():
     # 🧮 Pós-processamento e Cálculo de Métricas Finais
     latency = end_time - start_time
     tokens_per_second = final_output_tokens / latency if latency > 0 and final_output_tokens > 0 else len(full_response.split()) / latency
-    total_chat_tokens = count_tokens(history_string) + output_tokens
-
+    
     # Fallback caso o provedor (como o HuggingFace gratuito) não devolva os metadados nativos no stream
     if final_input_tokens == 0:
         final_input_tokens = (len(user_query) + len(full_response)) // 4
@@ -225,8 +218,7 @@ if user_query and user_query.strip():
         "tokens_per_sec": tokens_per_second,
         "finish_reason": str(finish_reason),
         "system_fingerprint": str(system_fingerprint),
-        "reasoning_tokens": reasoning_tokens,
-        "history_tokens": total_chat_tokens
+        "reasoning_tokens": reasoning_tokens
     }
     
     # Adiciona a resposta final da IA à memória do chat para manter o contexto
