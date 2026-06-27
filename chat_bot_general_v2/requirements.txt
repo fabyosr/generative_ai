@@ -4,3 +4,6 @@ langchain-huggingface
 langchainhub
 langchain_openai
 langchain_ollama
+
+better-profanity
+detoxify
