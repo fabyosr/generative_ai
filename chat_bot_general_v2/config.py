@@ -162,6 +162,13 @@ PRICING = {
 }
 
 # ---------------------------------------------------------------------------
+# Guardrails — constantes de configuração
+# ---------------------------------------------------------------------------
+LLAMAGUARD_REPO      = "meta-llama/Meta-Llama-Guard-2-8B"
+LLAMAGUARD_TIMEOUT   = 15     # segundos (cold start HF gratuito pode ser lento)
+REVIEW_THRESHOLD     = 0.40   # score OpenAI Moderation → zona cinza → LlamaGuard
+
+# ---------------------------------------------------------------------------
 # Mensagens de bloqueio exibidas ao usuário
 # ---------------------------------------------------------------------------
 GUARDRAIL_MSG_INPUT  = "⚠️ Sua mensagem foi bloqueada por violar as diretrizes de uso."

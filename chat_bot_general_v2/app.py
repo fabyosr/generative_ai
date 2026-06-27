@@ -190,15 +190,28 @@ def _render_sidebar() -> tuple[str, str, float]:
             gs = guardrail_status(provider=provider)
             st.markdown("**Camadas ativas:**")
             c1, c2 = st.columns(2)
-            c1.metric("🔒 System Prompt",  "✅ ON" if gs["system_prompt"]    else "❌ OFF")
-            c2.metric("📝 Léxico PT+EN",   "✅ ON" if gs["better_profanity"] else "❌ OFF")
+            c1.metric("🔒 System Prompt", "✅ ON" if gs["system_prompt"]    else "❌ OFF")
+            c2.metric("📝 Léxico PT+EN",  "✅ ON" if gs["better_profanity"] else "❌ OFF")
             c3, c4 = st.columns(2)
-            c3.metric("🤖 OpenAI Mod API", "✅ ON" if gs["openai_moderation"] else "⚠️ OFF")
-            c4.metric("🦙 LlamaGuard",     "✅ ON" if gs["llamaguard"]        else "⚠️ OFF")
+            c3.metric("🤖 OpenAI Mod",   "✅ ON" if gs["openai_moderation"] else "⚠️ OFF")
+            c4.metric("🦙 LlamaGuard",   "✅ ON" if gs["llamaguard"]        else "⚠️ OFF")
+
+            # Avisos contextuais por camada
             if not gs["openai_moderation"]:
-                st.caption("⚠️ OpenAI Moderation API inativa — disponível somente com provedor OpenAI.")
-            if not gs["llamaguard"]:
-                st.caption("⚠️ LlamaGuard reservado para ambiente dedicado.")
+                st.caption(
+                    "⚠️ OpenAI Moderation inativa — "
+                    "disponível somente com provedor OpenAI."
+                )
+            if gs["llamaguard"]:
+                st.caption(
+                    "🦙 LlamaGuard ativo — acionado na zona cinza da Moderation "
+                    "ou quando provedor não é OpenAI."
+                )
+            else:
+                st.caption(
+                    "⚠️ LlamaGuard inativo — "
+                    "configure HUGGINGFACEHUB_API_TOKEN para habilitar."
+                )
 
             st.markdown("---")
 
