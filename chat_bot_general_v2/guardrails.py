@@ -1,30 +1,19 @@
 """
 guardrails.py
 =============
-Pipeline de moderação em 3 camadas, aplicado em sequência crescente de custo:
+Pipeline de moderação leve — otimizado para Streamlit Cloud (zero dependências
+pesadas, zero chamadas de rede adicionais).
 
-  [1] better-profanity  — léxico EN nativo + lista customizada PT-BR
-                          ~1ms, zero rede, primeira barreira óbvia
+Stack atual:
+  [1] better-profanity  — léxico EN nativo + lista customizada PT-BR (~1ms)
+  [2] OpenAI Moderation API — gratuita, sem tokens, quando provedor = openai
 
-  [2] Detoxify          — modelo BERT local (multilíngue)
-                          ~50ms, zero rede, classifica toxicidade com score
-                          · score > DETOXIFY_BLOCK  → bloqueia direto
-                          · score > DETOXIFY_REVIEW → escala para LlamaGuard
+Camadas futuras (comentadas, prontas para habilitar em ambiente com mais recursos):
+  [3] Detoxify   — requer compatibilidade transformers==4.30.x
+  [4] LlamaGuard — requer token HF e latência aceitável
 
-  [3] LlamaGuard        — modelo Meta fine-tunado para moderação via HF API
-                          ~500ms, usa token HuggingFace já existente no projeto
-                          acionado SOMENTE na zona cinza do Detoxify
-
-Uso:
-    result = check_input("mensagem do usuário")
-    if not result.safe:
-        # exibe aviso, não envia à LLM
-
-    result = check_output("resposta da LLM")
-    if not result.safe:
-        # substitui resposta por mensagem padrão
-
-Nenhuma dependência de Streamlit → 100% testável de forma isolada.
+A principal linha de defesa é o system prompt em config.py (SAFETY POLICY),
+que instrui o modelo a recusar conteúdo nocivo independentemente dessas camadas.
 """
 
 from __future__ import annotations
@@ -34,36 +23,27 @@ from dataclasses import dataclass
 from enum import Enum
 
 from better_profanity import profanity
-from detoxify import Detoxify
 
 # ---------------------------------------------------------------------------
-# Configuração — altere thresholds aqui sem tocar em lógica
+# Lista customizada PT-BR
 # ---------------------------------------------------------------------------
-
-# Detoxify: bloqueia direto acima deste score
-DETOXIFY_BLOCK_THRESHOLD: float = 0.70
-
-# Detoxify: zona cinza — escala para LlamaGuard entre os dois valores
-DETOXIFY_REVIEW_THRESHOLD: float = 0.40
-
-# LlamaGuard no HuggingFace Inference API
-LLAMAGUARD_REPO = "meta-llama/LlamaGuard-7b"
-
-# Lista customizada PT-BR para better-profanity (didática — expanda conforme necessário)
 PTBR_PROFANITY_LIST: list[str] = [
-    "merda", "porra", "caralho", "fodase", "foda-se", "viado",
+    # Palavrões comuns
+    "merda", "porra", "caralho", "fodase", "foda-se",
     "buceta", "cu", "puta", "vagabunda", "arrombado", "babaca",
     "imbecil", "idiota", "otario", "otário", "desgraça", "desgraçado",
+    # Abreviações ofensivas
     "fdp", "vsf", "tnc", "vtnc", "pqp", "krl",
-    # termos de ódio / discriminação
-    "macaco", "nego", "crioulo",          # contexto racial ofensivo
-    "viadinho", "sapatão", "traveco",     # homofóbicos
+    # Termos de ódio / discriminação
+    "macaco", "nego", "crioulo",
+    "viado", "viadinho", "sapatão", "traveco",
 ]
 
-# Mensagens padrão exibidas ao usuário quando bloqueado
+# ---------------------------------------------------------------------------
+# Mensagens padrão ao usuário
+# ---------------------------------------------------------------------------
 BLOCK_MESSAGE_INPUT  = "⚠️ Sua mensagem foi bloqueada por violar as diretrizes de uso."
 BLOCK_MESSAGE_OUTPUT = "⚠️ A resposta foi bloqueada por conter conteúdo inadequado."
-
 
 # ---------------------------------------------------------------------------
 # Tipos de resultado
@@ -71,58 +51,42 @@ BLOCK_MESSAGE_OUTPUT = "⚠️ A resposta foi bloqueada por conter conteúdo ina
 
 class GuardrailLayer(str, Enum):
     PROFANITY  = "better-profanity"
-    DETOXIFY   = "detoxify"
-    LLAMAGUARD = "llamaguard"
-    NONE       = "none"          # nenhuma camada bloqueou
+    OPENAI_MOD = "openai-moderation"
+    SYSTEM_PROMPT = "system-prompt"   # reservado para log — o modelo recusou via SP
+    NONE       = "none"
 
 
 @dataclass
 class GuardrailResult:
-    safe:       bool
-    layer:      GuardrailLayer   # qual camada tomou a decisão
-    category:   str              # categoria detectada ou "safe"
-    score:      float            # score de confiança [0.0 – 1.0]
-    reason:     str              # texto legível para log/auditoria
+    safe:     bool
+    layer:    GuardrailLayer
+    category: str    # categoria detectada ou "safe"
+    score:    float  # confiança [0.0 – 1.0]
+    reason:   str    # texto legível para auditoria
 
 
 # ---------------------------------------------------------------------------
-# Inicialização — feita uma única vez por processo (lazy + cached)
+# Inicialização lazy — feita uma única vez por processo
 # ---------------------------------------------------------------------------
-
 _profanity_initialized = False
-_detoxify_model: Detoxify | None = None
 
 
 def _init_profanity() -> None:
-    """Carrega better-profanity com a lista PT-BR customizada."""
     global _profanity_initialized
     if not _profanity_initialized:
-        profanity.load_censor_words(whitelist_words=[])   # mantém lista EN nativa
-        profanity.add_censor_words(PTBR_PROFANITY_LIST)  # adiciona PT-BR
+        profanity.load_censor_words(whitelist_words=[])
+        profanity.add_censor_words(PTBR_PROFANITY_LIST)
         _profanity_initialized = True
 
 
-def _get_detoxify() -> Detoxify:
-    """Carrega o modelo Detoxify na primeira chamada e reutiliza nas demais."""
-    global _detoxify_model
-    if _detoxify_model is None:
-        # 'multilingual' cobre PT melhor que 'original' (que é só EN)
-        _detoxify_model = Detoxify("multilingual")
-    return _detoxify_model
-
-
 # ---------------------------------------------------------------------------
-# Camada 1 — better-profanity (léxico)
+# Camada 1 — better-profanity (léxico EN + PT-BR)
 # ---------------------------------------------------------------------------
 
 def _check_profanity(text: str) -> GuardrailResult:
-    """
-    Verificação léxica rápida.
-    Retorna bloqueio imediato se encontrar palavra na lista EN ou PT-BR.
-    """
+    """Verificação léxica instantânea. Bloqueia palavrões EN e PT-BR."""
     _init_profanity()
-    flagged = profanity.contains_profanity(text)
-    if flagged:
+    if profanity.contains_profanity(text):
         return GuardrailResult(
             safe     = False,
             layer    = GuardrailLayer.PROFANITY,
@@ -137,178 +101,126 @@ def _check_profanity(text: str) -> GuardrailResult:
 
 
 # ---------------------------------------------------------------------------
-# Camada 2 — Detoxify (ML local)
+# Camada 2 — OpenAI Moderation API (gratuita, ~150ms)
+# Ativada automaticamente quando o provedor ativo for OpenAI.
+# Categorias: hate, hate/threatening, harassment, self-harm,
+#             sexual, sexual/minors, violence, violence/graphic
 # ---------------------------------------------------------------------------
 
-def _check_detoxify(text: str) -> tuple[GuardrailResult, bool]:
+def _check_openai_moderation(text: str) -> GuardrailResult:
     """
-    Classifica toxicidade com modelo BERT local.
-
-    Retorna
-    -------
-    (result, needs_escalation)
-        needs_escalation=True quando score está na zona cinza
-        → deve ser escalado para LlamaGuard
-    """
-    model   = _get_detoxify()
-    scores  = model.predict(text)        # dict com várias categorias
-
-    # Pega a categoria com maior score
-    top_cat   = max(scores, key=scores.get)
-    top_score = float(scores[top_cat])
-
-    if top_score >= DETOXIFY_BLOCK_THRESHOLD:
-        return GuardrailResult(
-            safe     = False,
-            layer    = GuardrailLayer.DETOXIFY,
-            category = top_cat,
-            score    = top_score,
-            reason   = f"Detoxify bloqueou: {top_cat} ({top_score:.2f})",
-        ), False
-
-    if top_score >= DETOXIFY_REVIEW_THRESHOLD:
-        # Zona cinza — passa para LlamaGuard decidir
-        return GuardrailResult(
-            safe     = True,   # provisoriamente seguro até LlamaGuard confirmar
-            layer    = GuardrailLayer.DETOXIFY,
-            category = top_cat,
-            score    = top_score,
-            reason   = f"Zona cinza: {top_cat} ({top_score:.2f}) → escalando para LlamaGuard",
-        ), True
-
-    return GuardrailResult(
-        safe=True, layer=GuardrailLayer.NONE,
-        category="safe", score=top_score, reason="",
-    ), False
-
-
-# ---------------------------------------------------------------------------
-# Camada 3 — LlamaGuard (HuggingFace API) — só na zona cinza
-# ---------------------------------------------------------------------------
-
-def _check_llamaguard(text: str) -> GuardrailResult:
-    """
-    Chama LlamaGuard via HuggingFace Inference API.
-    Só é acionado quando Detoxify está na zona cinza.
-
-    LlamaGuard responde "safe" ou "unsafe\nS<N>" onde S<N> é a categoria:
-        S1  Violência / crimes
-        S2  Conteúdo sexual explícito
-        S3  Armas
-        S4  Substâncias controladas
-        S5  Conteúdo com menores
-        S6  Privacidade / dados pessoais
-        S7  Ódio / discriminação
-        S8  Automutilação
-        S9  Desinformação
-        S10 Atividades ilegais
-        S11 Código malicioso
-        S12 Terrorismo / extremismo
-        S13 Regulamentado (financeiro, jurídico, médico)
+    Chama o endpoint gratuito /v1/moderations da OpenAI.
+    Não consome tokens nem aparece no billing.
+    Retorna resultado seguro (fail-open) em caso de erro de rede.
     """
     try:
-        import requests
+        from openai import OpenAI
 
-        hf_token = os.environ.get("HUGGINGFACEHUB_API_TOKEN", "")
-        if not hf_token:
-            # Sem token → assume seguro para não bloquear indevidamente
-            return GuardrailResult(
-                safe=True, layer=GuardrailLayer.LLAMAGUARD,
-                category="unknown", score=0.0,
-                reason="Token HF ausente — LlamaGuard ignorado.",
-            )
+        client   = OpenAI()   # usa OPENAI_API_KEY do ambiente automaticamente
+        response = client.moderations.create(input=text)
+        result   = response.results[0]
 
-        api_url  = f"https://api-inference.huggingface.co/models/{LLAMAGUARD_REPO}"
-        headers  = {"Authorization": f"Bearer {hf_token}"}
-        payload  = {"inputs": f"[INST] Task: Check safety.\nUser: {text} [/INST]"}
+        if result.flagged:
+            # Identifica a categoria com maior score
+            scores  = result.category_scores.model_dump()
+            top_cat = max(scores, key=scores.get)
+            top_score = float(scores[top_cat])
 
-        response = requests.post(api_url, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()
-
-        raw = response.json()
-        # HF retorna lista de dicts com 'generated_text'
-        generated = raw[0].get("generated_text", "safe") if isinstance(raw, list) else "safe"
-        generated = generated.strip().lower()
-
-        if generated.startswith("unsafe"):
-            # Extrai categoria (ex: "unsafe\ns7" → "S7")
-            parts    = generated.split()
-            category = parts[1].upper() if len(parts) > 1 else "unsafe"
             return GuardrailResult(
                 safe     = False,
-                layer    = GuardrailLayer.LLAMAGUARD,
-                category = category,
-                score    = 1.0,
-                reason   = f"LlamaGuard bloqueou: categoria {category}",
+                layer    = GuardrailLayer.OPENAI_MOD,
+                category = top_cat,
+                score    = top_score,
+                reason   = f"OpenAI Moderation flagged: {top_cat} ({top_score:.2f})",
             )
 
         return GuardrailResult(
-            safe=True, layer=GuardrailLayer.LLAMAGUARD,
-            category="safe", score=0.0, reason="LlamaGuard: seguro.",
+            safe=True, layer=GuardrailLayer.OPENAI_MOD,
+            category="safe", score=0.0,
+            reason="OpenAI Moderation: safe.",
         )
 
     except Exception as exc:
-        # Falha na API → fail-open (não bloqueia) para não degradar a UX
+        # Fail-open: qualquer falha (rede, key ausente) não bloqueia o usuário
         return GuardrailResult(
-            safe=True, layer=GuardrailLayer.LLAMAGUARD,
+            safe=True, layer=GuardrailLayer.OPENAI_MOD,
             category="error", score=0.0,
-            reason=f"LlamaGuard indisponível: {exc}",
+            reason=f"OpenAI Moderation indisponível: {exc}",
         )
 
 
 # ---------------------------------------------------------------------------
-# Funções públicas — únicas interfaces usadas pelo app.py
+# Funções públicas
 # ---------------------------------------------------------------------------
 
-def check_input(text: str) -> GuardrailResult:
+def check_input(text: str, provider: str = "") -> GuardrailResult:
     """
-    Executa o pipeline completo de moderação no INPUT do usuário.
-    Camadas: better-profanity → Detoxify → LlamaGuard (zona cinza)
+    Pipeline de moderação do INPUT do usuário.
+
+    Fluxo:
+      1. better-profanity (sempre)
+      2. OpenAI Moderation API (só se provider == 'openai')
+
+    O system prompt de segurança em config.py atua como terceira camada
+    diretamente no modelo, cobrindo casos semânticos que léxico não pega.
+
+    Parâmetros
+    ----------
+    text     : mensagem do usuário
+    provider : chave do provedor ativo ('openai' | 'ollama' | 'hf_endpoint')
     """
     # Camada 1 — léxico
     result = _check_profanity(text)
     if not result.safe:
         return result
 
-    # Camada 2 — ML local
-    result, needs_escalation = _check_detoxify(text)
-    if not result.safe:
-        return result
-
-    # Camada 3 — LlamaGuard (somente zona cinza)
-    if needs_escalation:
-        result = _check_llamaguard(text)
-
-    return result
-
-
-def check_output(text: str) -> GuardrailResult:
-    """
-    Moderação do OUTPUT da LLM.
-    Usa apenas Detoxify (sem LlamaGuard) — output tende a ser mais seguro
-    e rodar LlamaGuard duas vezes por turno dobraria as chamadas à HF API.
-    """
-    # Camada 1 — léxico
-    result = _check_profanity(text)
-    if not result.safe:
-        return result
-
-    # Camada 2 — Detoxify com threshold ligeiramente mais permissivo no output
-    model   = _get_detoxify()
-    scores  = model.predict(text)
-    top_cat = max(scores, key=scores.get)
-    top_score = float(scores[top_cat])
-
-    if top_score >= DETOXIFY_BLOCK_THRESHOLD:
-        return GuardrailResult(
-            safe     = False,
-            layer    = GuardrailLayer.DETOXIFY,
-            category = top_cat,
-            score    = top_score,
-            reason   = f"Output bloqueado pelo Detoxify: {top_cat} ({top_score:.2f})",
-        )
+    # Camada 2 — OpenAI Moderation (somente quando provedor é OpenAI)
+    if provider == "openai":
+        result = _check_openai_moderation(text)
+        if not result.safe:
+            return result
 
     return GuardrailResult(
         safe=True, layer=GuardrailLayer.NONE,
-        category="safe", score=top_score, reason="",
+        category="safe", score=0.0, reason="Todas as camadas aprovaram.",
     )
+
+
+def check_output(text: str, provider: str = "") -> GuardrailResult:
+    """
+    Moderação do OUTPUT da LLM.
+    Mesma stack do input — o modelo já foi instruído pelo system prompt,
+    então o output tende a ser mais seguro; léxico + moderation são suficientes.
+    """
+    result = _check_profanity(text)
+    if not result.safe:
+        return result
+
+    if provider == "openai":
+        result = _check_openai_moderation(text)
+        if not result.safe:
+            return result
+
+    return GuardrailResult(
+        safe=True, layer=GuardrailLayer.NONE,
+        category="safe", score=0.0, reason="Output aprovado.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Utilitário de diagnóstico
+# ---------------------------------------------------------------------------
+
+def guardrail_status(provider: str = "") -> dict:
+    """
+    Retorna disponibilidade de cada camada para exibir na sidebar.
+    """
+    openai_key = bool(os.environ.get("OPENAI_API_KEY"))
+    return {
+        "system_prompt":   True,                          # sempre ativo
+        "better_profanity": True,                         # sempre ativo
+        "openai_moderation": provider == "openai" and openai_key,
+        # Camadas futuras:
+        "detoxify":    False,   # desabilitado: incompatibilidade Python 3.12+
+        "llamaguard":  False,   # desabilitado: reservado para ambiente dedicado
+    }

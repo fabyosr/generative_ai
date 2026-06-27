@@ -21,6 +21,7 @@ from guardrails import (
     GuardrailLayer,
     check_input,
     check_output,
+    guardrail_status,
     BLOCK_MESSAGE_INPUT,
     BLOCK_MESSAGE_OUTPUT,
 )
@@ -184,6 +185,23 @@ def _render_sidebar() -> tuple[str, str, float]:
 
         # ── Status Guardrails ────────────────────────────────────────────────
         with st.expander("🛡️ Status dos Guardrails", expanded=False):
+
+            # Disponibilidade das camadas
+            gs = guardrail_status(provider=provider_key)
+            st.markdown("**Camadas ativas:**")
+            c1, c2 = st.columns(2)
+            c1.metric("🔒 System Prompt",  "✅ ON" if gs["system_prompt"]    else "❌ OFF")
+            c2.metric("📝 Léxico PT+EN",   "✅ ON" if gs["better_profanity"] else "❌ OFF")
+            c3, c4 = st.columns(2)
+            c3.metric("🤖 OpenAI Mod API", "✅ ON" if gs["openai_moderation"] else "⚠️ OFF")
+            c4.metric("🦙 LlamaGuard",     "✅ ON" if gs["llamaguard"]        else "⚠️ OFF")
+            if not gs["openai_moderation"]:
+                st.caption("⚠️ OpenAI Moderation API inativa — disponível somente com provedor OpenAI.")
+            if not gs["llamaguard"]:
+                st.caption("⚠️ LlamaGuard reservado para ambiente dedicado.")
+
+            st.markdown("---")
+
             log = st.session_state.turn_log
             if not log:
                 st.caption("Nenhum turno registrado ainda.")
@@ -196,7 +214,6 @@ def _render_sidebar() -> tuple[str, str, float]:
                 col2.metric("🚫 Input Bloqueado",  inp_blocked)
                 col3.metric("🚫 Output Bloqueado", out_blocked)
 
-                # Últimas detecções
                 flagged_turns = [t for t in log if t.input_flagged or t.output_flagged]
                 if flagged_turns:
                     st.markdown("**Últimas detecções:**")
@@ -263,7 +280,7 @@ with tab_chat:
             st.markdown(user_query)
 
         # ── Guardrail INPUT ──────────────────────────────────────────────────
-        input_gr = check_input(user_query)
+        input_gr = check_input(user_query, provider=provider_key)
 
         if not input_gr.safe:
             with st.chat_message("assistant", avatar="🤖"):
@@ -320,7 +337,7 @@ with tab_chat:
             llm_ts   = datetime.now(timezone.utc)
 
             # ── Guardrail OUTPUT ─────────────────────────────────────────────
-            output_gr = check_output(full_response)
+            output_gr = check_output(full_response, provider=provider_key)
             if not output_gr.safe:
                 placeholder.warning(BLOCK_MESSAGE_OUTPUT)
                 full_response = BLOCK_MESSAGE_OUTPUT
