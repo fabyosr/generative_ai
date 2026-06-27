@@ -187,7 +187,7 @@ def _render_sidebar() -> tuple[str, str, float]:
         with st.expander("🛡️ Status dos Guardrails", expanded=False):
 
             # Disponibilidade das camadas
-            gs = guardrail_status(provider=provider_key)
+            gs = guardrail_status(provider=provider)
             st.markdown("**Camadas ativas:**")
             c1, c2 = st.columns(2)
             c1.metric("🔒 System Prompt",  "✅ ON" if gs["system_prompt"]    else "❌ OFF")
