@@ -175,6 +175,25 @@ GUARDRAIL_MSG_INPUT  = "⚠️ Sua mensagem foi bloqueada por violar as diretriz
 GUARDRAIL_MSG_OUTPUT = "⚠️ A resposta foi bloqueada por conter conteúdo inadequado."
 
 # ---------------------------------------------------------------------------
+# Limites de contexto por modelo (tokens máximos da janela)
+# Usado para calcular % de utilização da janela de contexto
+# ---------------------------------------------------------------------------
+MODEL_CONTEXT_LIMITS: dict[str, int] = {
+    "openai":      128_000,   # gpt-4o-mini
+    "hf_endpoint":   8_000,   # Llama 3 8B
+    "ollama":       16_000,   # Phi-3 mini (contexto padrão)
+}
+
+# Alerta quando context window ultrapassar este percentual
+CONTEXT_WINDOW_ALERT_PCT: float = 80.0
+
+# Threshold de finish_reason que indica resposta cortada
+FINISH_REASON_TRUNCATED = {"length", "max_tokens"}
+
+# Escalas de projeção de custo para exibição no board
+COST_PROJECTION_SCALES = [100, 1_000, 10_000]   # interações
+
+# ---------------------------------------------------------------------------
 # Valores iniciais do dicionário de métricas de resposta
 # ---------------------------------------------------------------------------
 DEFAULT_METRICS: dict = {

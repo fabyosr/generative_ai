@@ -17,7 +17,14 @@ from uuid import uuid4
 
 from langchain_core.messages import BaseMessage
 
-from config import DEFAULT_METRICS, PRICING
+from config import (
+    DEFAULT_METRICS,
+    PRICING,
+    MODEL_CONTEXT_LIMITS,
+    CONTEXT_WINDOW_ALERT_PCT,
+    FINISH_REASON_TRUNCATED,
+    COST_PROJECTION_SCALES,
+)
 
 if TYPE_CHECKING:
     from guardrails import GuardrailResult
@@ -253,6 +260,20 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
             "System Fingerprint":   t.system_fingerprint,
             # Custo
             "Custo Turno (USD)":    round(t.turn_cost_usd, 6),
+
+            # ── Grupo A — métricas derivadas (calculadas na hora de exibir) ──
+            # Nenhum campo novo no TurnRecord — derivadas dos campos existentes
+
+            # % da janela de contexto consumida neste turno
+            # calculada com context_window_pct() usando limite do provedor
+            "Context Window %":     context_window_pct(t.llm_input_tokens, t.provider),
+
+            # Razão output/input — detecta contexto inflado (< 0.05 = atenção)
+            "Token Efficiency":     token_efficiency_ratio(t.llm_input_tokens, t.llm_output_tokens),
+
+            # Resposta cortada: finish_reason = length ou max_tokens
+            "Resposta Cortada":     "✂️ Sim" if is_response_truncated(t.finish_reason) else "✅ Ok",
+
             # Guardrails — auditoria
             "Input Bloqueado":      "🚫 Sim" if t.input_flagged  else "✅ Ok",
             "Input GR Layer":       t.input_gr_layer,
@@ -269,7 +290,7 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
     # Garante tipos numéricos corretos para ordenação e filtros
     int_cols = ["# Turno", "Tokens Usuário", "Tokens Input LLM",
                 "Tokens Output LLM", "Tokens Raciocínio"]
-    float_cols = ["Temperature", "Latência (s)", "Tokens/s", "Custo Turno (USD)", "Input GR Score", "Output GR Score"]
+    float_cols = ["Temperature", "Latência (s)", "Tokens/s", "Custo Turno (USD)", "Input GR Score", "Output GR Score", "Context Window %", "Token Efficiency"]
     for c in int_cols:
         df[c] = df[c].astype(int)
     for c in float_cols:
@@ -293,3 +314,133 @@ def estimate_history_tokens(history: list[BaseMessage]) -> int:
 def count_history_messages(history: list[BaseMessage]) -> int:
     """Retorna a quantidade de mensagens no histórico."""
     return len(history)
+
+
+# ---------------------------------------------------------------------------
+# Grupo A — métricas derivadas (calculadas na hora de exibir, sem mudar
+# a assinatura de build_turn_record ou a estrutura do TurnRecord)
+# ---------------------------------------------------------------------------
+
+def context_window_pct(input_tokens: int, provider: str) -> float:
+    """
+    Percentual da janela de contexto consumida neste turno.
+    Usa MODEL_CONTEXT_LIMITS do config para o denominador correto por modelo.
+    Retorna 0.0 se input_tokens não estiver disponível.
+    """
+    limit = MODEL_CONTEXT_LIMITS.get(provider, 8_000)
+    if limit <= 0 or input_tokens <= 0:
+        return 0.0
+    return round(min((input_tokens / limit) * 100, 100.0), 1)
+
+
+def token_efficiency_ratio(input_tokens: int, output_tokens: int) -> float:
+    """
+    Razão output / input tokens.
+    Valores muito baixos (< 0.05) indicam que o contexto acumulado domina
+    o custo sem gerar output proporcional — sinal de janela inflada.
+    Retorna 0.0 quando input_tokens = 0.
+    """
+    if input_tokens <= 0:
+        return 0.0
+    return round(output_tokens / input_tokens, 3)
+
+
+def is_response_truncated(finish_reason: str) -> bool:
+    """
+    Retorna True quando o modelo parou por limite de tokens (resposta cortada).
+    Finish reasons que indicam truncamento: 'length', 'max_tokens'.
+    """
+    return finish_reason.lower() in FINISH_REASON_TRUNCATED
+
+
+def session_duration_seconds(session_start: datetime) -> float:
+    """Retorna quantos segundos se passaram desde o início da sessão."""
+    return (datetime.now(timezone.utc) - session_start).total_seconds()
+
+
+def format_session_duration(total_seconds: float) -> str:
+    """Formata duração de sessão em mm:ss ou hh:mm:ss legível."""
+    total = int(total_seconds)
+    h, remainder = divmod(total, 3600)
+    m, s = divmod(remainder, 60)
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    return f"{m:02d}:{s:02d}"
+
+
+def guardrail_block_rate(turn_log: list) -> dict[str, float]:
+    """
+    Taxa de bloqueio por camada de guardrail sobre o total de turnos.
+    Retorna dicionário {layer: pct} para exibição no dashboard.
+    Ignora turnos com input_gr_layer = 'none' (não bloqueados).
+    """
+    if not turn_log:
+        return {}
+    total = len(turn_log)
+    counts: dict[str, int] = {}
+    for t in turn_log:
+        if t.input_flagged:
+            counts[t.input_gr_layer] = counts.get(t.input_gr_layer, 0) + 1
+        if t.output_flagged:
+            key = f"output/{t.output_gr_layer}"
+            counts[key] = counts.get(key, 0) + 1
+    return {layer: round((n / total) * 100, 1) for layer, n in counts.items()}
+
+
+def cost_projection(cost_per_turn_usd: float) -> dict[str, float]:
+    """
+    Projeta custo mensal estimado para diferentes escalas de uso.
+    Assume mesma distribuição de tokens e provedores do histórico atual.
+    """
+    return {
+        f"{scale:,} interações/mês": round(cost_per_turn_usd * scale, 4)
+        for scale in COST_PROJECTION_SCALES
+    }
+
+
+def build_session_kpis(
+    turn_log:      list,
+    session_start: datetime,
+    provider:      str,
+) -> dict:
+    """
+    Agrega todos os KPIs do Grupo A em um único dicionário para a UI.
+    Chamado uma vez por render — sem side effects.
+    """
+    total_turns = len(turn_log)
+
+    if total_turns == 0:
+        return {
+            "session_duration":    "00:00",
+            "total_turns":         0,
+            "context_window_pct":  0.0,
+            "context_window_alert": False,
+            "token_efficiency":    0.0,
+            "truncated_turns":     0,
+            "truncated_pct":       0.0,
+            "block_rate":          {},
+            "avg_cost_per_turn":   0.0,
+            "cost_projection":     {},
+        }
+
+    last = turn_log[-1]
+    ctx_pct       = context_window_pct(last.llm_input_tokens, provider)
+    efficiency    = token_efficiency_ratio(last.llm_input_tokens, last.llm_output_tokens)
+    truncated     = [t for t in turn_log if is_response_truncated(t.finish_reason)]
+    avg_cost      = sum(t.turn_cost_usd for t in turn_log) / total_turns
+    block_rate    = guardrail_block_rate(turn_log)
+    projection    = cost_projection(avg_cost)
+    duration      = format_session_duration(session_duration_seconds(session_start))
+
+    return {
+        "session_duration":     duration,
+        "total_turns":          total_turns,
+        "context_window_pct":   ctx_pct,
+        "context_window_alert": ctx_pct >= CONTEXT_WINDOW_ALERT_PCT,
+        "token_efficiency":     efficiency,
+        "truncated_turns":      len(truncated),
+        "truncated_pct":        round(len(truncated) / total_turns * 100, 1),
+        "block_rate":           block_rate,
+        "avg_cost_per_turn":    round(avg_cost, 6),
+        "cost_projection":      projection,
+    }

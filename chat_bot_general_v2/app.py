@@ -31,10 +31,12 @@ from metrics import (
     StreamMetadata,
     apply_token_fallback,
     build_metrics_dict,
+    build_session_kpis,
     build_turn_record,
     calculate_cost,
     count_history_messages,
     estimate_history_tokens,
+    is_response_truncated,
     turn_log_to_dataframe,
 )
 
@@ -109,6 +111,10 @@ def _init_session_state() -> None:
     # Chave OpenAI digitada pelo usuário na UI
     if "openai_api_key_input" not in st.session_state:
         st.session_state.openai_api_key_input = ""
+
+    # Timestamp de início da sessão — usado para duração e KPIs do Grupo A
+    if "session_start" not in st.session_state:
+        st.session_state.session_start = datetime.now(timezone.utc)
 
 
 _init_session_state()
@@ -215,6 +221,97 @@ def _render_sidebar() -> tuple[str, str, float]:
             else:
                 st.caption("Envie mensagens para mapear a latência.")
 
+        # ── Grupo A — Métricas de Sessão e Qualidade ────────────────────────
+        # Todas as métricas deste bloco são DERIVADAS de dados já existentes
+        # no session_state — nenhuma chamada de rede, nenhum efeito colateral.
+        # build_session_kpis() agrega tudo em um único dict para a UI.
+        with st.expander("📐 Sessão & Qualidade", expanded=True):
+
+            # Coleta todos os KPIs do Grupo A de uma vez
+            kpis = build_session_kpis(
+                turn_log      = st.session_state.turn_log,
+                session_start = st.session_state.session_start,
+                provider      = provider,
+            )
+
+            # ── Linha 1: visão geral da sessão ──────────────────────────────
+            c1, c2, c3 = st.columns(3)
+            c1.metric(
+                "⏳ Duração",
+                kpis["session_duration"],
+                help="Tempo decorrido desde o início ou último reset da sessão.",
+            )
+            c2.metric(
+                "🔁 Turnos",
+                kpis["total_turns"],
+                help="Total de interações registradas nesta sessão.",
+            )
+            c3.metric(
+                "💸 Custo Médio/Turno",
+                f"USD {kpis['avg_cost_per_turn']:.6f}",
+                help="Média do custo por interação — base para projeção de escala.",
+            )
+
+            # ── Linha 2: saúde da janela de contexto e qualidade ────────────
+            c4, c5, c6 = st.columns(3)
+
+            # Context window %: input_tokens do último turno ÷ limite do modelo
+            ctx_pct = kpis["context_window_pct"]
+            c4.metric(
+                "🪟 Context Window",
+                f"{ctx_pct:.1f}%",
+                help=(
+                    "% da janela de contexto consumida no último turno. "
+                    "Acima de 80% o modelo pode começar a 'esquecer' mensagens antigas."
+                ),
+            )
+
+            # Token efficiency: razão output/input — detecta contexto inflado
+            c5.metric(
+                "⚖️ Token Efficiency",
+                f"{kpis['token_efficiency']:.3f}",
+                help=(
+                    "Razão output ÷ input tokens. "
+                    "Valores < 0.05 indicam que o contexto acumulado domina o custo "
+                    "sem gerar output proporcional."
+                ),
+            )
+
+            # Respostas cortadas: finish_reason = 'length' ou 'max_tokens'
+            c6.metric(
+                "✂️ Respostas Cortadas",
+                f"{kpis['truncated_turns']} ({kpis['truncated_pct']:.1f}%)",
+                help=(
+                    "Turnos onde finish_reason=length — "
+                    "resposta interrompida pelo limite de tokens do modelo."
+                ),
+            )
+
+            # Alerta visual quando context window ultrapassa 80%
+            if kpis["context_window_alert"]:
+                st.warning(
+                    f"⚠️ Janela de contexto em **{ctx_pct:.1f}%** — "
+                    "considere usar 'Limpar Tudo' para evitar degradação das respostas.",
+                )
+
+            # ── Projeção de custo mensal por escala ─────────────────────────
+            # Só exibe quando há pelo menos 1 turno para ter custo médio real
+            if kpis["cost_projection"]:
+                st.markdown("**Projeção de custo mensal (baseada no custo médio atual):**")
+                proj_cols = st.columns(len(kpis["cost_projection"]))
+                for col, (label, value) in zip(proj_cols, kpis["cost_projection"].items()):
+                    col.metric(label, f"USD {value:.2f}")
+
+            # ── Taxa de bloqueio por camada de guardrail ─────────────────────
+            # Só exibe quando há bloqueios registrados no turn_log
+            if kpis["block_rate"]:
+                st.markdown("**Taxa de bloqueio por camada:**")
+                for layer, pct in kpis["block_rate"].items():
+                    st.progress(
+                        min(int(pct), 100),
+                        text=f"{layer}: {pct:.1f}% dos turnos",
+                    )
+
         # ── Status Guardrails ─────────────────────────────────────────────────
         with st.expander("🛡️ Status dos Guardrails", expanded=False):
             gs = guardrail_status(
@@ -280,6 +377,7 @@ def _render_sidebar() -> tuple[str, str, float]:
             st.session_state.turn_log            = []
             st.session_state.id_session          = str(uuid4())
             st.session_state.openai_api_key_input = ""
+            st.session_state.session_start        = datetime.now(timezone.utc)
             st.rerun()
 
     return personality, provider, temperature
@@ -407,6 +505,20 @@ with tab_chat:
                 else:
                     placeholder.markdown(full_response)
 
+        # ── Alerta de truncamento (Grupo A) ──────────────────────────────────
+        # is_response_truncated() checa se finish_reason indica resposta cortada
+        # pelo limite de tokens (finish_reason = 'length' ou 'max_tokens').
+        # Exibido como st.warning fora do history_container para não sujar o log
+        # de chat — é uma notificação técnica, não parte da conversa.
+        if is_response_truncated(stream_meta.finish_reason):
+            st.warning(
+                "✂️ **Resposta truncada** — o modelo atingiu o limite de tokens "
+                f"(`finish_reason={stream_meta.finish_reason}`). "
+                "A resposta pode estar incompleta. Considere reformular a pergunta "
+                "em partes menores ou limpar o histórico para reduzir o contexto.",
+                icon="⚠️",
+            )
+
         # ── Pós-processamento ─────────────────────────────────────────────────
         latency     = end_time - start_time
         stream_meta = apply_token_fallback(stream_meta, user_query, full_response)
@@ -506,6 +618,13 @@ with tab_log:
                 "Input GR Score":    st.column_config.NumberColumn(format="%.3f",  width="small"),
                 "Output Bloqueado":  st.column_config.TextColumn(width="small"),
                 "Output GR Score":   st.column_config.NumberColumn(format="%.3f",  width="small"),
+                # Colunas Grupo A — derivadas, sem mudar TurnRecord
+                "Context Window %":  st.column_config.NumberColumn(format="%.1f",  width="small",
+                                        help="% da janela de contexto do modelo consumida neste turno."),
+                "Token Efficiency":  st.column_config.NumberColumn(format="%.3f",  width="small",
+                                        help="Razão output÷input tokens. < 0.05 = contexto inflado."),
+                "Resposta Cortada":  st.column_config.TextColumn(width="small",
+                                        help="finish_reason=length indica resposta interrompida."),
             },
         )
 
