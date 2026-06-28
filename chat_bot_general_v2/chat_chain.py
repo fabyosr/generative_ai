@@ -19,6 +19,7 @@ def build_stream(
     provider: str,
     temperature: float,
     system_prompt: str,
+    api_key: str = "",
 ) -> Generator[Any, None, None]:
     """
     Cria o chain prompt → llm e retorna o gerador de chunks do stream.
@@ -30,8 +31,9 @@ def build_stream(
     provider     : chave do provedor LLM
     temperature  : criatividade
     system_prompt: instrução de personalidade do sistema
+    api_key      : chave OpenAI digitada na UI (opcional — complementa os.environ)
     """
-    llm = get_llm(provider, temperature)
+    llm = get_llm(provider, temperature, api_key=api_key)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),

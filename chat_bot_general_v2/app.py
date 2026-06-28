@@ -16,16 +16,17 @@ import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 
 from chat_chain import build_stream
+from config import DEFAULT_METRICS, LLM_PROVIDERS, PERSONALITIES
 from guardrails import (
-    GuardrailResult,
     GuardrailLayer,
+    GuardrailResult,
+    BLOCK_MESSAGE_INPUT,
+    BLOCK_MESSAGE_OUTPUT,
     check_input,
     check_output,
     guardrail_status,
-    BLOCK_MESSAGE_INPUT,
-    BLOCK_MESSAGE_OUTPUT,
 )
-from config import DEFAULT_METRICS, LLM_PROVIDERS, PERSONALITIES
+from llm_factory import is_provider_available
 from metrics import (
     StreamMetadata,
     apply_token_fallback,
@@ -43,7 +44,7 @@ from metrics import (
 st.set_page_config(
     page_title="Virtual Assistant 🤖",
     page_icon="🤖",
-    layout="wide",          # wide para a tabela respirar
+    layout="wide",
 )
 
 st.markdown("""
@@ -59,8 +60,13 @@ st.markdown("""
             margin-bottom: 25px;
         }
         [data-testid="stMetricValue"] { font-size: 20px !important; font-weight: bold; }
-        /* Célula da tabela não quebra linha desnecessariamente */
         [data-testid="stDataFrame"] td { white-space: nowrap; }
+
+        /* Chat container com scroll interno — input fica fixo abaixo */
+        .chat-history-container {
+            overflow-y: auto;
+            padding-right: 8px;
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -78,10 +84,9 @@ def _init_session_state() -> None:
             os.environ["HUGGINGFACEHUB_API_TOKEN"] = st.secrets["HUGGINGFACEHUB_API_TOKEN"]
             st.session_state.api_configured = True
         except Exception:
-            st.warning("Token do HuggingFace não encontrado.")
+            st.session_state.api_configured = False
 
     if "id_session" not in st.session_state:
-        # UUID estável durante toda a sessão; reseta só no "Limpar Tudo"
         st.session_state.id_session = str(uuid4())
 
     if "chat_history" not in st.session_state:
@@ -99,8 +104,11 @@ def _init_session_state() -> None:
         st.session_state.latency_history = []
 
     if "turn_log" not in st.session_state:
-        # Lista de TurnRecord — append a cada resposta, nunca reescrita
         st.session_state.turn_log = []
+
+    # Chave OpenAI digitada pelo usuário na UI
+    if "openai_api_key_input" not in st.session_state:
+        st.session_state.openai_api_key_input = ""
 
 
 _init_session_state()
@@ -126,6 +134,30 @@ def _render_sidebar() -> tuple[str, str, float]:
             format_func=lambda k: LLM_PROVIDERS[k],
         )
 
+        # ── API Key OpenAI (apenas quando provider = openai) ────────────────
+        if provider == "openai":
+            openai_key_input = st.text_input(
+                "🔑 OpenAI API Key:",
+                value=st.session_state.openai_api_key_input,
+                type="password",
+                placeholder="sk-...",
+                help="Cole sua chave da OpenAI. Não é armazenada permanentemente.",
+            )
+            if openai_key_input:
+                st.session_state.openai_api_key_input = openai_key_input
+                os.environ["OPENAI_API_KEY"] = openai_key_input
+        else:
+            openai_key_input = ""
+
+        # ── Aviso Ollama ─────────────────────────────────────────────────────
+        if provider == "ollama":
+            available, reason = is_provider_available("ollama")
+            if not available:
+                st.error(
+                    f"⚠️ **Ollama indisponível**\n\n{reason}",
+                    icon="🚫",
+                )
+
         temperature = st.slider(
             "Criatividade (Temperature):",
             min_value=0.0, max_value=1.0, value=0.1, step=0.1,
@@ -133,7 +165,7 @@ def _render_sidebar() -> tuple[str, str, float]:
 
         st.markdown("---")
 
-        # ── Cost Monitor ────────────────────────────────────────────────────
+        # ── Cost Monitor ─────────────────────────────────────────────────────
         st.metric(
             label="💰 Custo Acumulado da Sessão",
             value=f"USD {st.session_state.accumulated_cost:.5f}",
@@ -142,25 +174,25 @@ def _render_sidebar() -> tuple[str, str, float]:
 
         st.markdown("---")
 
-        # ── Monitor de Metadados ─────────────────────────────────────────────
+        # ── Monitor de Metadados ──────────────────────────────────────────────
         with st.expander("📊 Monitor de Metadados Reais", expanded=True):
             m = st.session_state.metrics
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("📥 Input Tokens",        m["last_input_tokens"])
-                st.metric("⏱️ Latência",             f"{m['latency']:.2f}s")
-                st.metric("🧠 Tokens Raciocínio",    m["reasoning_tokens"])
+                st.metric("📥 Input Tokens",     m["last_input_tokens"])
+                st.metric("⏱️ Latência",          f"{m['latency']:.2f}s")
+                st.metric("🧠 Tokens Raciocínio", m["reasoning_tokens"])
             with col2:
-                st.metric("📤 Output Tokens",   m["last_output_tokens"])
-                st.metric("⚡ Velocidade",       f"{m['tokens_per_sec']:.1f} t/s")
-                st.metric("🛑 Fim do Stream",    m["finish_reason"])
+                st.metric("📤 Output Tokens", m["last_output_tokens"])
+                st.metric("⚡ Velocidade",     f"{m['tokens_per_sec']:.1f} t/s")
+                st.metric("🛑 Fim do Stream",  m["finish_reason"])
 
-        # ── Janela de Contexto ───────────────────────────────────────────────
+        # ── Janela de Contexto ────────────────────────────────────────────────
         with st.expander("🧠 Janela de Contexto Atual", expanded=True):
             history      = st.session_state.chat_history
             ctx_tokens   = estimate_history_tokens(history)
             ctx_messages = count_history_messages(history)
-            col1, col2 = st.columns(2)
+            col1, col2   = st.columns(2)
             with col1:
                 st.metric(
                     "💬 Mensagens no Histórico", ctx_messages,
@@ -172,7 +204,7 @@ def _render_sidebar() -> tuple[str, str, float]:
                     help="Estimativa de tokens enviados ao modelo via MessagesPlaceholder (chars ÷ 4).",
                 )
 
-        # ── Histórico de Latência ────────────────────────────────────────────
+        # ── Histórico de Latência ─────────────────────────────────────────────
         with st.expander("📈 Histórico de Latência", expanded=True):
             if st.session_state.latency_history:
                 df_lat = pd.DataFrame(
@@ -183,39 +215,32 @@ def _render_sidebar() -> tuple[str, str, float]:
             else:
                 st.caption("Envie mensagens para mapear a latência.")
 
-        # ── Status Guardrails ────────────────────────────────────────────────
+        # ── Status Guardrails ─────────────────────────────────────────────────
         with st.expander("🛡️ Status dos Guardrails", expanded=False):
-
-            # Disponibilidade das camadas
-            gs = guardrail_status(provider=provider)
+            gs = guardrail_status(
+                provider       = provider,
+                openai_api_key = openai_key_input,
+            )
             st.markdown("**Camadas ativas:**")
             c1, c2 = st.columns(2)
             c1.metric("🔒 System Prompt", "✅ ON" if gs["system_prompt"]    else "❌ OFF")
             c2.metric("📝 Léxico PT+EN",  "✅ ON" if gs["better_profanity"] else "❌ OFF")
             c3, c4 = st.columns(2)
-            c3.metric("🤖 OpenAI Mod",   "✅ ON" if gs["openai_moderation"] else "⚠️ OFF")
-            c4.metric("🦙 LlamaGuard",   "✅ ON" if gs["llamaguard"]        else "⚠️ OFF")
+            c3.metric("🤖 OpenAI Mod",    "✅ ON" if gs["openai_moderation"] else "⚠️ OFF")
+            c4.metric("🦙 LlamaGuard",    "✅ ON" if gs["llamaguard"]        else "⚠️ OFF")
 
-            # Avisos contextuais por camada
             if not gs["openai_moderation"]:
-                st.caption(
-                    "⚠️ OpenAI Moderation inativa — "
-                    "disponível somente com provedor OpenAI."
-                )
+                st.caption("⚠️ OpenAI Moderation inativa — disponível somente com provedor OpenAI.")
             if gs["llamaguard"]:
                 st.caption(
                     "🦙 LlamaGuard ativo — acionado na zona cinza da Moderation "
                     "ou quando provedor não é OpenAI."
                 )
             else:
-                st.caption(
-                    "⚠️ LlamaGuard inativo — "
-                    "configure HUGGINGFACEHUB_API_TOKEN para habilitar."
-                )
+                st.caption("⚠️ LlamaGuard inativo — configure HUGGINGFACEHUB_API_TOKEN para habilitar.")
 
             st.markdown("---")
-
-            log = st.session_state.turn_log
+            log         = st.session_state.turn_log
             if not log:
                 st.caption("Nenhum turno registrado ainda.")
             else:
@@ -246,14 +271,15 @@ def _render_sidebar() -> tuple[str, str, float]:
                                 icon="🚫",
                             )
 
-        # ── Reset ────────────────────────────────────────────────────────────
-        if st.button("Limpar Tudo", use_container_width=True):
-            st.session_state.chat_history     = [AIMessage(content="Oi! Tudo reiniciado. Como posso ajudar?")]
-            st.session_state.metrics          = DEFAULT_METRICS.copy()
-            st.session_state.accumulated_cost = 0.0
-            st.session_state.latency_history  = []
-            st.session_state.turn_log         = []
-            st.session_state.id_session       = str(uuid4())   # nova sessão
+        # ── Reset ─────────────────────────────────────────────────────────────
+        if st.button("Limpar Tudo", width="stretch"):
+            st.session_state.chat_history        = [AIMessage(content="Oi! Tudo reiniciado. Como posso ajudar?")]
+            st.session_state.metrics             = DEFAULT_METRICS.copy()
+            st.session_state.accumulated_cost    = 0.0
+            st.session_state.latency_history     = []
+            st.session_state.turn_log            = []
+            st.session_state.id_session          = str(uuid4())
+            st.session_state.openai_api_key_input = ""
             st.rerun()
 
     return personality, provider, temperature
@@ -269,39 +295,54 @@ tab_chat, tab_log = st.tabs(["💬 Chat", "📋 Log de Observabilidade"])
 
 
 # ===========================================================================
-# 5. TAB CHAT — histórico e input
+# 5. TAB CHAT
 # ===========================================================================
 with tab_chat:
 
-    # ── Renderização do histórico ────────────────────────────────────────────
-    for message in st.session_state.chat_history:
-        is_ai  = isinstance(message, AIMessage)
-        role   = "assistant" if is_ai else "user"
-        avatar = "🤖" if is_ai else "👤"
-        with st.chat_message(role, avatar=avatar):
-            st.markdown(message.content)
+    # ── Container com scroll interno para o histórico ────────────────────────
+    # st.container(height=...) mantém o histórico em área rolável
+    # e o st.chat_input fica fixo abaixo do container, fora do scroll
+    history_container = st.container(height=520, border=False)
 
-    # ── Input e processamento ────────────────────────────────────────────────
+    with history_container:
+        for message in st.session_state.chat_history:
+            is_ai  = isinstance(message, AIMessage)
+            role   = "assistant" if is_ai else "user"
+            avatar = "🤖" if is_ai else "👤"
+            with st.chat_message(role, avatar=avatar):
+                st.markdown(message.content)
+
+    # ── Input fixo abaixo do container ───────────────────────────────────────
     user_query = st.chat_input("Digite sua mensagem aqui...")
 
     if user_query and user_query.strip():
+
+        # ── Bloqueia se Ollama indisponível ──────────────────────────────────
+        if provider_key == "ollama":
+            available, reason = is_provider_available("ollama")
+            if not available:
+                st.error(f"⚠️ {reason}")
+                st.stop()
+
         user_ts = datetime.now(timezone.utc)
 
-        # Exibe mensagem do usuário imediatamente
         st.session_state.chat_history.append(HumanMessage(content=user_query))
-        with st.chat_message("user", avatar="👤"):
-            st.markdown(user_query)
 
-        # ── Guardrail INPUT ──────────────────────────────────────────────────
+        # Re-renderiza histórico + nova mensagem dentro do container
+        with history_container:
+            with st.chat_message("user", avatar="👤"):
+                st.markdown(user_query)
+
+        # ── Guardrail INPUT ───────────────────────────────────────────────────
         input_gr = check_input(user_query, provider=provider_key)
 
         if not input_gr.safe:
-            with st.chat_message("assistant", avatar="🤖"):
-                st.warning(BLOCK_MESSAGE_INPUT)
+            with history_container:
+                with st.chat_message("assistant", avatar="🤖"):
+                    st.warning(BLOCK_MESSAGE_INPUT)
 
-            # Registra o turno bloqueado sem chamar a LLM
-            _safe_gr = __import__("guardrails").GuardrailResult(
-                safe=True, layer=__import__("guardrails").GuardrailLayer.NONE,
+            _safe_gr = GuardrailResult(
+                safe=True, layer=GuardrailLayer.NONE,
                 category="safe", score=0.0, reason="",
             )
             turn = build_turn_record(
@@ -324,50 +365,57 @@ with tab_chat:
             st.session_state.chat_history.append(AIMessage(content=BLOCK_MESSAGE_INPUT))
             st.rerun()
 
-        # ── Stream da resposta ───────────────────────────────────────────────
-        with st.chat_message("assistant", avatar="🤖"):
-            placeholder   = st.empty()
-            full_response = ""
-            stream_meta   = StreamMetadata()
+        # ── Stream da resposta ────────────────────────────────────────────────
+        with history_container:
+            with st.chat_message("assistant", avatar="🤖"):
+                placeholder   = st.empty()
+                full_response = ""
+                stream_meta   = StreamMetadata()
 
-            start_time = time.time()
+                start_time = time.time()
 
-            stream = build_stream(
-                user_query    = user_query,
-                chat_history  = st.session_state.chat_history,
-                provider      = provider_key,
-                temperature   = temperature,
-                system_prompt = PERSONALITIES[personality_key],
-            )
+                try:
+                    stream = build_stream(
+                        user_query    = user_query,
+                        chat_history  = st.session_state.chat_history,
+                        provider      = provider_key,
+                        temperature   = temperature,
+                        system_prompt = PERSONALITIES[personality_key],
+                        api_key       = st.session_state.openai_api_key_input,
+                    )
 
-            for chunk in stream:
-                if chunk.content:
-                    full_response += chunk.content
-                    placeholder.markdown(full_response + "▌")
-                stream_meta.update_from_chunk(chunk)
+                    for chunk in stream:
+                        if chunk.content:
+                            full_response += chunk.content
+                            placeholder.markdown(full_response + "▌")
+                        stream_meta.update_from_chunk(chunk)
 
-            end_time = time.time()
-            llm_ts   = datetime.now(timezone.utc)
+                except Exception as exc:
+                    error_msg = f"❌ Erro ao chamar o modelo: `{exc}`"
+                    placeholder.error(error_msg)
+                    st.session_state.chat_history.append(AIMessage(content=error_msg))
+                    st.rerun()
 
-            # ── Guardrail OUTPUT ─────────────────────────────────────────────
-            output_gr = check_output(full_response, provider=provider_key)
-            if not output_gr.safe:
-                placeholder.warning(BLOCK_MESSAGE_OUTPUT)
-                full_response = BLOCK_MESSAGE_OUTPUT
-            else:
-                placeholder.markdown(full_response)
+                end_time = time.time()
+                llm_ts   = datetime.now(timezone.utc)
 
-        # ── Pós-processamento ────────────────────────────────────────────────
-        latency = end_time - start_time
+                # ── Guardrail OUTPUT ──────────────────────────────────────────
+                output_gr = check_output(full_response, provider=provider_key)
+                if not output_gr.safe:
+                    placeholder.warning(BLOCK_MESSAGE_OUTPUT)
+                    full_response = BLOCK_MESSAGE_OUTPUT
+                else:
+                    placeholder.markdown(full_response)
 
+        # ── Pós-processamento ─────────────────────────────────────────────────
+        latency     = end_time - start_time
         stream_meta = apply_token_fallback(stream_meta, user_query, full_response)
+        call_cost   = calculate_cost(stream_meta.input_tokens, stream_meta.output_tokens)
 
-        call_cost = calculate_cost(stream_meta.input_tokens, stream_meta.output_tokens)
         st.session_state.accumulated_cost += call_cost
         st.session_state.latency_history.append(latency)
         st.session_state.metrics = build_metrics_dict(stream_meta, latency, full_response)
 
-        # ── Registra o TurnRecord com auditoria de guardrails ────────────────
         turn = build_turn_record(
             turn_number      = len(st.session_state.turn_log) + 1,
             id_session       = st.session_state.id_session,
@@ -385,8 +433,6 @@ with tab_chat:
             output_gr_result = output_gr,
         )
         st.session_state.turn_log.append(turn)
-
-        # Salva resposta no histórico e força re-render
         st.session_state.chat_history.append(AIMessage(content=full_response))
         st.rerun()
 
@@ -404,7 +450,7 @@ with tab_log:
     else:
         df = turn_log_to_dataframe(turn_log)
 
-        # ── KPIs resumidos no topo da aba ───────────────────────────────────
+        # ── KPIs ──────────────────────────────────────────────────────────────
         k1, k2, k3, k4, k5 = st.columns(5)
         k1.metric("🔁 Turnos",           len(turn_log))
         k2.metric("📥 Total Input Tok",  int(df["Tokens Input LLM"].sum()))
@@ -414,27 +460,26 @@ with tab_log:
 
         st.markdown("---")
 
-        # ── Filtros rápidos ──────────────────────────────────────────────────
+        # ── Filtros ───────────────────────────────────────────────────────────
         with st.expander("🔍 Filtros", expanded=False):
             col_f1, col_f2, col_f3 = st.columns(3)
 
-            providers_disponiveis = df["Provedor"].unique().tolist()
+            providers_disp = df["Provedor"].unique().tolist()
             filtro_provider = col_f1.multiselect(
-                "Provedor", providers_disponiveis, default=providers_disponiveis
+                "Provedor", providers_disp, default=providers_disp
             )
 
-            personalities_disponiveis = df["Personalidade"].unique().tolist()
+            personalities_disp = df["Personalidade"].unique().tolist()
             filtro_personality = col_f2.multiselect(
-                "Personalidade", personalities_disponiveis, default=personalities_disponiveis
+                "Personalidade", personalities_disp, default=personalities_disp
             )
 
-            lat_min, lat_max = float(df["Latência (s)"].min()), float(df["Latência (s)"].max())
-            if lat_min < lat_max:
-                filtro_latencia = col_f3.slider(
-                    "Latência máxima (s)", lat_min, lat_max, lat_max, step=0.1
-                )
-            else:
-                filtro_latencia = lat_max
+            lat_min = float(df["Latência (s)"].min())
+            lat_max = float(df["Latência (s)"].max())
+            filtro_latencia = (
+                col_f3.slider("Latência máxima (s)", lat_min, lat_max, lat_max, step=0.1)
+                if lat_min < lat_max else lat_max
+            )
 
             df_filtrado = df[
                 df["Provedor"].isin(filtro_provider)
@@ -442,25 +487,25 @@ with tab_log:
                 & (df["Latência (s)"] <= filtro_latencia)
             ]
 
-        # ── Tabela principal ─────────────────────────────────────────────────
+        # ── Tabela ────────────────────────────────────────────────────────────
         st.dataframe(
             df_filtrado,
             use_container_width=True,
             hide_index=True,
             column_config={
-                "# Turno":            st.column_config.NumberColumn(width="small"),
-                "ID Sessão":          st.column_config.TextColumn(width="medium"),
-                "ID Mensagem":        st.column_config.TextColumn(width="medium"),
-                "Mensagem Usuário":   st.column_config.TextColumn(width="large"),
-                "Resposta LLM":       st.column_config.TextColumn(width="large"),
-                "Latência (s)":       st.column_config.NumberColumn(format="%.3f", width="small"),
-                "Tokens/s":           st.column_config.NumberColumn(format="%.1f",  width="small"),
-                "Custo Turno (USD)":  st.column_config.NumberColumn(format="%.6f", width="small"),
-                "Temperature":        st.column_config.NumberColumn(format="%.1f",  width="small"),
-                "Input Bloqueado":    st.column_config.TextColumn(width="small"),
-                "Input GR Score":     st.column_config.NumberColumn(format="%.3f",  width="small"),
-                "Output Bloqueado":   st.column_config.TextColumn(width="small"),
-                "Output GR Score":    st.column_config.NumberColumn(format="%.3f",  width="small"),
+                "# Turno":           st.column_config.NumberColumn(width="small"),
+                "ID Sessão":         st.column_config.TextColumn(width="medium"),
+                "ID Mensagem":       st.column_config.TextColumn(width="medium"),
+                "Mensagem Usuário":  st.column_config.TextColumn(width="large"),
+                "Resposta LLM":      st.column_config.TextColumn(width="large"),
+                "Latência (s)":      st.column_config.NumberColumn(format="%.3f", width="small"),
+                "Tokens/s":          st.column_config.NumberColumn(format="%.1f",  width="small"),
+                "Custo Turno (USD)": st.column_config.NumberColumn(format="%.6f", width="small"),
+                "Temperature":       st.column_config.NumberColumn(format="%.1f",  width="small"),
+                "Input Bloqueado":   st.column_config.TextColumn(width="small"),
+                "Input GR Score":    st.column_config.NumberColumn(format="%.3f",  width="small"),
+                "Output Bloqueado":  st.column_config.TextColumn(width="small"),
+                "Output GR Score":   st.column_config.NumberColumn(format="%.3f",  width="small"),
             },
         )
 
@@ -469,12 +514,12 @@ with tab_log:
             f"ID Sessão atual: `{st.session_state.id_session}`"
         )
 
-        # ── Export CSV ───────────────────────────────────────────────────────
+        # ── Export CSV ────────────────────────────────────────────────────────
         csv_bytes = df_filtrado.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="⬇️ Exportar CSV",
-            data=csv_bytes,
-            file_name=f"observabilidade_{st.session_state.id_session[:8]}.csv",
-            mime="text/csv",
-            use_container_width=True,
+            label     = "⬇️ Exportar CSV",
+            data      = csv_bytes,
+            file_name = f"observabilidade_{st.session_state.id_session[:8]}.csv",
+            mime      = "text/csv",
+            width     = "stretch",
         )

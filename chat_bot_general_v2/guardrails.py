@@ -394,14 +394,29 @@ def check_output(text: str, provider: str = "") -> GuardrailResult:
 # Utilitário de diagnóstico — exibido na sidebar
 # ---------------------------------------------------------------------------
 
-def guardrail_status(provider: str = "") -> dict:
-    """Retorna disponibilidade de cada camada para exibir na sidebar."""
-    hf_token    = bool(os.environ.get("HUGGINGFACEHUB_API_TOKEN"))
-    openai_key  = bool(os.environ.get("OPENAI_API_KEY"))
+def guardrail_status(provider: str = "", openai_api_key: str = "") -> dict:
+    """
+    Retorna disponibilidade de cada camada para exibir na sidebar.
+
+    Parâmetros
+    ----------
+    provider       : chave do provedor ativo
+    openai_api_key : chave digitada pelo usuário na UI (complementa os.environ)
+    """
+    # HF token: checa tanto os.environ quanto st.secrets (já copiado no init)
+    hf_token = bool(os.environ.get("HUGGINGFACEHUB_API_TOKEN"))
+
+    # OpenAI key: checa ambiente + chave digitada na UI
+    openai_key = bool(openai_api_key) or bool(os.environ.get("OPENAI_API_KEY"))
+
+    # LlamaGuard: ativo quando há token HF — independente do provedor atual
+    # pois é chamado para qualquer provedor != openai
+    llamaguard_active = hf_token
+
     return {
-        "system_prompt":    True,
-        "better_profanity": True,
+        "system_prompt":     True,
+        "better_profanity":  True,
         "openai_moderation": provider == "openai" and openai_key,
-        "llamaguard":        hf_token,
+        "llamaguard":        llamaguard_active,
         "detoxify":          False,   # reservado: incompatível com Python 3.12+
     }
