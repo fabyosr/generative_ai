@@ -17,6 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from chat_chain import build_stream
 from config import DEFAULT_METRICS, LLM_PROVIDERS, PERSONALITIES
+from sanitizer import sanitize, sanitizer_rules_summary
 from guardrails import (
     GuardrailLayer,
     GuardrailResult,
@@ -337,17 +338,45 @@ def _render_sidebar() -> tuple[str, str, float]:
                 st.caption("⚠️ LlamaGuard inativo — configure HUGGINGFACEHUB_API_TOKEN para habilitar.")
 
             st.markdown("---")
-            log         = st.session_state.turn_log
+            log = st.session_state.turn_log
             if not log:
                 st.caption("Nenhum turno registrado ainda.")
             else:
                 total       = len(log)
                 inp_blocked = sum(1 for t in log if t.input_flagged)
                 out_blocked = sum(1 for t in log if t.output_flagged)
+                # sp_refusal: guardrails aprovaram mas modelo recusou via SP
+                sp_refused  = sum(1 for t in log if t.sp_refusal)
+                # Toxicidade média dos inputs — inclui mensagens não bloqueadas
+                tox_scores  = [t.input_toxicity_score for t in log if t.input_toxicity_score > 0]
+                avg_tox     = sum(tox_scores) / len(tox_scores) if tox_scores else 0.0
+
+                # Linha 1 — bloqueios diretos
                 col1, col2, col3 = st.columns(3)
                 col1.metric("🔁 Turnos",          total)
                 col2.metric("🚫 Input Bloqueado",  inp_blocked)
                 col3.metric("🚫 Output Bloqueado", out_blocked)
+
+                # Linha 2 — métricas de toxicidade e recusa via SP
+                col4, col5 = st.columns(2)
+                col4.metric(
+                    "🛡️ Recusas via SP",
+                    sp_refused,
+                    help=(
+                        "Turnos onde os guardrails aprovaram mas o modelo recusou "
+                        "semanticamente por conta do safety prompt. "
+                        "Ex: 'bomba caseira com fins didáticos'."
+                    ),
+                )
+                col5.metric(
+                    "☣️ Toxicidade Média",
+                    f"{avg_tox:.3f}",
+                    help=(
+                        "Score médio de toxicidade dos inputs via OpenAI Moderation. "
+                        "Inclui mensagens aprovadas — detecta padrões de risco mesmo "
+                        "sem bloqueio. Disponível somente com provedor OpenAI."
+                    ),
+                )
 
                 flagged_turns = [t for t in log if t.input_flagged or t.output_flagged]
                 if flagged_turns:
@@ -367,6 +396,56 @@ def _render_sidebar() -> tuple[str, str, float]:
                                 f"({t.output_gr_score:.2f})",
                                 icon="🚫",
                             )
+
+        # ── Sanitização ──────────────────────────────────────────────────────
+        with st.expander("🧹 Sanitização de Output", expanded=False):
+            # Resumo de todas as regras ativas no sanitizer.py
+            rules = sanitizer_rules_summary()
+            c1, c2, c3 = st.columns(3)
+            c1.metric("🔍 PII Patterns",   len(rules["pii_patterns"]))
+            c2.metric("📝 Palavras Fixas",  len(rules["word_substitutions"]))
+            c3.metric("🔧 Regex Custom",    len(rules["custom_regex"]))
+            st.caption(f"Total de regras ativas: {rules['total_rules']}")
+
+            st.markdown("---")
+
+            # Estatísticas de sanitização da sessão atual
+            log = st.session_state.turn_log
+            if not log:
+                st.caption("Nenhum turno registrado ainda.")
+            else:
+                sanitized_turns = [t for t in log if t.was_sanitized]
+                san_pct = len(sanitized_turns) / len(log) * 100
+
+                col1, col2 = st.columns(2)
+                col1.metric(
+                    "🧹 Turnos Sanitizados",
+                    f"{len(sanitized_turns)} ({san_pct:.1f}%)",
+                    help="Turnos onde pelo menos uma substituição foi aplicada.",
+                )
+
+                # Agrega todas as regras disparadas na sessão
+                all_rules: dict[str, int] = {}
+                for t in sanitized_turns:
+                    for rule, count in t.sanitized_counts.items():
+                        all_rules[rule] = all_rules.get(rule, 0) + count
+
+                col2.metric(
+                    "🔢 Total Substituições",
+                    sum(all_rules.values()),
+                    help="Total de ocorrências substituídas em toda a sessão.",
+                )
+
+                # Breakdown por regra
+                if all_rules:
+                    st.markdown("**Regras mais acionadas:**")
+                    for rule, count in sorted(
+                        all_rules.items(), key=lambda x: x[1], reverse=True
+                    )[:5]:   # top 5
+                        st.progress(
+                            min(count * 10, 100),
+                            text=f"{rule}: {count}x",
+                        )
 
         # ── Reset ─────────────────────────────────────────────────────────────
         if st.button("Limpar Tudo", width="stretch"):
@@ -502,7 +581,14 @@ with tab_chat:
                 if not output_gr.safe:
                     placeholder.warning(BLOCK_MESSAGE_OUTPUT)
                     full_response = BLOCK_MESSAGE_OUTPUT
+                    san_result    = None   # não sanitiza resposta de bloqueio
                 else:
+                    # ── Sanitização silenciosa ─────────────────────────────
+                    # Aplicada APÓS o guardrail aprovar e ANTES de exibir.
+                    # Substitui PII, palavras fixas e padrões regex no output.
+                    # O usuário vê o texto limpo; o TurnRecord registra o log.
+                    san_result    = sanitize(full_response)
+                    full_response = san_result.sanitized_text
                     placeholder.markdown(full_response)
 
         # ── Alerta de truncamento (Grupo A) ──────────────────────────────────
@@ -543,6 +629,7 @@ with tab_chat:
             latency          = latency,
             input_gr_result  = input_gr,
             output_gr_result = output_gr,
+            sanitize_result  = san_result,   # None quando bloqueado pelo guardrail
         )
         st.session_state.turn_log.append(turn)
         st.session_state.chat_history.append(AIMessage(content=full_response))
@@ -625,6 +712,21 @@ with tab_log:
                                         help="Razão output÷input tokens. < 0.05 = contexto inflado."),
                 "Resposta Cortada":  st.column_config.TextColumn(width="small",
                                         help="finish_reason=length indica resposta interrompida."),
+                # Toxicidade contínua — score real mesmo quando safe=True
+                "Input Toxicidade":  st.column_config.NumberColumn(format="%.3f", width="small",
+                                        help="Score de toxicidade do input (OpenAI Moderation). Preenchido mesmo quando não bloqueado."),
+                "Input Tox Categoria": st.column_config.TextColumn(width="small",
+                                        help="Categoria com maior score de toxicidade no input."),
+                "Output Toxicidade": st.column_config.NumberColumn(format="%.3f", width="small",
+                                        help="Score de toxicidade do output (OpenAI Moderation)."),
+                # Recusa via System Prompt
+                "Recusa via SP":     st.column_config.TextColumn(width="small",
+                                        help="Guardrails aprovaram mas o modelo recusou via safety prompt."),
+                # Sanitização silenciosa
+                "Sanitizado":        st.column_config.TextColumn(width="small",
+                                        help="🧹 Sim = pelo menos uma substituição foi aplicada no output."),
+                "Regras Sanitização": st.column_config.TextColumn(width="large",
+                                        help="Lista de regras aplicadas: PII:CPF, WORD:foo, REGEX:bar."),
             },
         )
 

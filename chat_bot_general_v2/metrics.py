@@ -118,6 +118,24 @@ class TurnRecord:
     output_gr_category: str
     output_gr_score:    float
 
+    # Toxicidade contínua — score real da OpenAI Moderation, sempre preenchido,
+    # mesmo quando safe=True. Permite rastrear mensagens na zona cinza que
+    # passaram pelos guardrails mas foram recusadas pelo System Prompt.
+    input_toxicity_score:  float   # top score da categoria mais tóxica no input
+    input_toxicity_cat:    str     # categoria correspondente (ex: "violence")
+    output_toxicity_score: float   # top score da categoria mais tóxica no output
+
+    # Recusa detectada via System Prompt — quando os guardrails aprovam mas o
+    # modelo recusa semanticamente por conta das regras do safety prompt.
+    # Detectado por padrões de linguagem na resposta (heurística léxica).
+    sp_refusal:            bool    # True = recusa identificada na resposta
+
+    # Sanitização do output — substituições aplicadas antes de exibir ao usuário.
+    # Silenciosas para o usuário, auditáveis internamente via TurnRecord.
+    was_sanitized:         bool   # houve alguma substituição?
+    sanitized_rules:       list   # regras aplicadas ex: ["PII:CPF", "WORD:foo"]
+    sanitized_counts:      dict   # contagem por regra ex: {"PII:EMAIL": 2}
+
 
 # ---------------------------------------------------------------------------
 # Funções utilitárias — sem efeitos colaterais
@@ -164,6 +182,42 @@ def build_metrics_dict(
     }
 
 
+# Sinais léxicos de recusa — modelo recusou via System Prompt.
+# Lista em PT-BR pois o safety prompt instrui resposta sempre em português.
+# Expandível sem mudar a assinatura — só adicionar itens à lista.
+_REFUSAL_SIGNALS: list[str] = [
+    "não consigo ajudar",
+    "não posso ajudar",
+    "não é algo que posso",
+    "não posso fornecer",
+    "não posso apoiar",
+    "não posso criar",
+    "não posso gerar",
+    "não posso compartilhar",
+    "minhas diretrizes",
+    "diretrizes de segurança",
+    "vai contra minhas",
+    "não está dentro",
+    "não me é permitido",
+    "foge do escopo",
+    "não tenho como ajudar",
+]
+
+
+def detect_sp_refusal(response: str) -> bool:
+    """
+    Detecta se a resposta do modelo é uma recusa via System Prompt.
+
+    Heurística léxica: verifica se a resposta contém sinais conhecidos de
+    recusa em PT-BR. Não é perfeito — falsos positivos são possíveis quando
+    o modelo cita essas frases em outro contexto — mas cobre bem os casos reais.
+
+    Não substitui um classificador ML, mas é zero custo e zero latência.
+    """
+    r = response.lower()
+    return any(signal in r for signal in _REFUSAL_SIGNALS)
+
+
 def build_turn_record(
     *,
     turn_number:      int,
@@ -180,6 +234,7 @@ def build_turn_record(
     latency:          float,
     input_gr_result,               # GuardrailResult
     output_gr_result,              # GuardrailResult
+    sanitize_result = None,        # SanitizeResult do sanitizer.py (None = não aplicado)
 ) -> TurnRecord:
     """
     Constrói o TurnRecord completo após o fim do stream.
@@ -213,14 +268,25 @@ def build_turn_record(
         finish_reason        = meta.finish_reason,
         system_fingerprint   = meta.system_fingerprint,
         turn_cost_usd        = turn_cost,
-        input_flagged        = not input_gr_result.safe,
-        input_gr_layer       = input_gr_result.layer.value,
-        input_gr_category    = input_gr_result.category,
-        input_gr_score       = input_gr_result.score,
-        output_flagged       = not output_gr_result.safe,
-        output_gr_layer      = output_gr_result.layer.value,
-        output_gr_category   = output_gr_result.category,
-        output_gr_score      = output_gr_result.score,
+        input_flagged          = not input_gr_result.safe,
+        input_gr_layer         = input_gr_result.layer.value,
+        input_gr_category      = input_gr_result.category,
+        input_gr_score         = input_gr_result.score,
+        output_flagged         = not output_gr_result.safe,
+        output_gr_layer        = output_gr_result.layer.value,
+        output_gr_category     = output_gr_result.category,
+        output_gr_score        = output_gr_result.score,
+        # Toxicidade contínua — score real propagado pelo guardrail
+        # mesmo quando a mensagem foi aprovada (safe=True)
+        input_toxicity_score   = input_gr_result.toxicity_score,
+        input_toxicity_cat     = input_gr_result.toxicity_cat,
+        output_toxicity_score  = output_gr_result.toxicity_score,
+        # Recusa via System Prompt detectada por heurística léxica
+        sp_refusal             = detect_sp_refusal(full_response),
+        # Sanitização — registra o que foi substituído no output para auditoria
+        was_sanitized          = sanitize_result.was_sanitized if sanitize_result else False,
+        sanitized_rules        = sanitize_result.applied_rules if sanitize_result else [],
+        sanitized_counts       = sanitize_result.rule_counts   if sanitize_result else {},
     )
 
 
@@ -274,7 +340,7 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
             # Resposta cortada: finish_reason = length ou max_tokens
             "Resposta Cortada":     "✂️ Sim" if is_response_truncated(t.finish_reason) else "✅ Ok",
 
-            # Guardrails — auditoria
+            # Guardrails — auditoria de bloqueio
             "Input Bloqueado":      "🚫 Sim" if t.input_flagged  else "✅ Ok",
             "Input GR Layer":       t.input_gr_layer,
             "Input GR Categoria":   t.input_gr_category,
@@ -283,6 +349,22 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
             "Output GR Layer":      t.output_gr_layer,
             "Output GR Categoria":  t.output_gr_category,
             "Output GR Score":      round(t.output_gr_score, 3),
+
+            # Toxicidade contínua — score real da OpenAI Moderation, sempre
+            # preenchido mesmo quando safe=True. Permite ver mensagens na zona
+            # cinza que passaram pelos guardrails (ex: "bomba caseira" = 0.38)
+            "Input Toxicidade":     round(t.input_toxicity_score, 3),
+            "Input Tox Categoria":  t.input_toxicity_cat  or "—",
+            "Output Toxicidade":    round(t.output_toxicity_score, 3),
+
+            # Recusa via System Prompt — guardrails aprovaram mas o modelo
+            # recusou por conta das regras de segurança do safety prompt
+            "Recusa via SP":        "🛡️ Sim" if t.sp_refusal else "✅ Ok",
+
+            # Sanitização silenciosa — substituições aplicadas no output antes
+            # de exibir ao usuário (PII, palavras fixas, regex customizado)
+            "Sanitizado":           "🧹 Sim" if t.was_sanitized else "✅ Ok",
+            "Regras Sanitização":   ", ".join(t.sanitized_rules) if t.sanitized_rules else "—",
         })
 
     df = pd.DataFrame(rows)
@@ -290,7 +372,7 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
     # Garante tipos numéricos corretos para ordenação e filtros
     int_cols = ["# Turno", "Tokens Usuário", "Tokens Input LLM",
                 "Tokens Output LLM", "Tokens Raciocínio"]
-    float_cols = ["Temperature", "Latência (s)", "Tokens/s", "Custo Turno (USD)", "Input GR Score", "Output GR Score", "Context Window %", "Token Efficiency"]
+    float_cols = ["Temperature", "Latência (s)", "Tokens/s", "Custo Turno (USD)", "Input GR Score", "Output GR Score", "Context Window %", "Token Efficiency", "Input Toxicidade", "Output Toxicidade"]
     for c in int_cols:
         df[c] = df[c].astype(int)
     for c in float_cols:

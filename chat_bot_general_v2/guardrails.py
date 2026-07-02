@@ -82,11 +82,16 @@ class GuardrailLayer(str, Enum):
 
 @dataclass
 class GuardrailResult:
-    safe:     bool
-    layer:    GuardrailLayer
-    category: str    # categoria detectada ou "safe"
-    score:    float  # score de confiança [0.0 – 1.0]
-    reason:   str    # texto legível para auditoria/log
+    safe:            bool
+    layer:           GuardrailLayer
+    category:        str    # categoria detectada ou "safe"
+    score:           float  # score de confiança [0.0 – 1.0]
+    reason:          str    # texto legível para auditoria/log
+    # Toxicidade contínua — preenchida SEMPRE, mesmo quando safe=True.
+    # Permite rastrear mensagens na zona cinza que passaram sem bloqueio
+    # (ex: "bomba caseira com fins didáticos" — passa no léxico mas tem score > 0)
+    toxicity_score:  float = 0.0   # top score da categoria mais alta (0.0–1.0)
+    toxicity_cat:    str   = ""    # categoria correspondente ao top score
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +154,10 @@ def _check_openai_moderation(text: str) -> tuple[GuardrailResult, bool]:
     """
     Chama /v1/moderations (gratuito, zero tokens).
 
+    IMPORTANTE: sempre lê e propaga toxicity_score/toxicity_cat mesmo quando
+    flagged=False — isso resolve o gap onde mensagens na zona cinza (ex: "bomba
+    caseira com fins didáticos") passavam sem deixar rastro de score na tabela.
+
     Retorna
     -------
     (result, needs_llamaguard)
@@ -157,52 +166,60 @@ def _check_openai_moderation(text: str) -> tuple[GuardrailResult, bool]:
     """
     try:
         from openai import OpenAI
-        client   = OpenAI()
-        response = client.moderations.create(input=text)
-        result   = response.results[0]
-        scores   = result.category_scores.model_dump()
-        top_cat  = max(scores, key=scores.get)
+        client    = OpenAI()
+        response  = client.moderations.create(input=text)
+        result    = response.results[0]
+        scores    = result.category_scores.model_dump()
+        top_cat   = max(scores, key=scores.get)
         top_score = float(scores[top_cat])
 
-        # Bloqueio direto
+        # Bloqueio direto — toxicity_score preenchido com o score real
         if result.flagged:
             return GuardrailResult(
-                safe     = False,
-                layer    = GuardrailLayer.OPENAI_MOD,
-                category = top_cat,
-                score    = top_score,
-                reason   = f"OpenAI Moderation bloqueou: {top_cat} ({top_score:.2f})",
+                safe           = False,
+                layer          = GuardrailLayer.OPENAI_MOD,
+                category       = top_cat,
+                score          = top_score,
+                reason         = f"OpenAI Moderation bloqueou: {top_cat} ({top_score:.2f})",
+                toxicity_score = top_score,
+                toxicity_cat   = top_cat,
             ), False
 
-        # Zona cinza → escala para LlamaGuard
+        # Zona cinza → escala para LlamaGuard — toxicity_score preservado
         if top_score >= REVIEW_THRESHOLD:
             return GuardrailResult(
-                safe     = True,
-                layer    = GuardrailLayer.OPENAI_MOD,
-                category = top_cat,
-                score    = top_score,
-                reason   = (
+                safe           = True,
+                layer          = GuardrailLayer.OPENAI_MOD,
+                category       = top_cat,
+                score          = top_score,
+                reason         = (
                     f"Zona cinza: {top_cat} ({top_score:.2f}) "
-                    f"≥ {REVIEW_THRESHOLD} → escalando para LlamaGuard."
+                    f">= {REVIEW_THRESHOLD} → escalando para LlamaGuard."
                 ),
+                toxicity_score = top_score,
+                toxicity_cat   = top_cat,
             ), True
 
-        # Aprovado com score real
+        # Aprovado — toxicity_score preenchido mesmo sem bloqueio
+        # Isso é o que faltava: mensagens como "bomba caseira" terão
+        # violence=0.38 registrado mesmo passando pelo guardrail
         return GuardrailResult(
-            safe     = True,
-            layer    = GuardrailLayer.OPENAI_MOD,
-            category = "safe",
-            score    = top_score,
-            reason   = f"OpenAI Moderation: safe (top={top_cat} {top_score:.2f})",
+            safe           = True,
+            layer          = GuardrailLayer.OPENAI_MOD,
+            category       = "safe",
+            score          = top_score,
+            reason         = f"OpenAI Moderation: safe (top={top_cat} {top_score:.2f})",
+            toxicity_score = top_score,
+            toxicity_cat   = top_cat,
         ), False
 
     except Exception as exc:
-        # Fail-open + escala para LlamaGuard para compensar a falha
+        # Fail-open — toxicity_score zerado quando API indisponível
         return GuardrailResult(
             safe=True, layer=GuardrailLayer.OPENAI_MOD,
             category="error", score=0.0,
             reason=f"OpenAI Moderation indisponível: {exc}",
-        ), True   # escala para LlamaGuard quando Moderation falha
+        ), True
 
 
 # ---------------------------------------------------------------------------
@@ -357,10 +374,17 @@ def check_input(text: str, provider: str = "") -> GuardrailResult:
         if not result.safe:
             return result
 
+    # Propaga toxicity_score/toxicity_cat do resultado mais recente que os tenha.
+    # Garante que mensagens aprovadas mas com sinal de risco (ex: zona cinza que
+    # o LlamaGuard liberou) ficam registradas com score real na observabilidade.
     return GuardrailResult(
-        safe=True, layer=GuardrailLayer.NONE,
-        category="safe", score=0.0,
-        reason="Todas as camadas aprovaram.",
+        safe           = True,
+        layer          = GuardrailLayer.NONE,
+        category       = "safe",
+        score          = 0.0,
+        reason         = "Todas as camadas aprovaram.",
+        toxicity_score = result.toxicity_score,
+        toxicity_cat   = result.toxicity_cat,
     )
 
 
@@ -384,9 +408,13 @@ def check_output(text: str, provider: str = "") -> GuardrailResult:
             return result
 
     return GuardrailResult(
-        safe=True, layer=GuardrailLayer.NONE,
-        category="safe", score=0.0,
-        reason="Output aprovado.",
+        safe           = True,
+        layer          = GuardrailLayer.NONE,
+        category       = "safe",
+        score          = 0.0,
+        reason         = "Output aprovado.",
+        toxicity_score = result.toxicity_score,
+        toxicity_cat   = result.toxicity_cat,
     )
 
 
