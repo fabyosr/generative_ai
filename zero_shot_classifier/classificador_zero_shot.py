@@ -31,7 +31,7 @@ st.sidebar.header("Configurações")
 
 modelo = st.sidebar.text_input(
     "Modelo",
-    "facebook/mbart-large-50-mnli-multilingual"
+    "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
 )
 
 multilabel = st.sidebar.checkbox(
