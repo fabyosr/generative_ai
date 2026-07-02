@@ -1,0 +1,6 @@
+streamlit>=1.45.0
+transformers>=4.53.0
+torch>=2.7.0
+sentencepiece>=0.2.0
+pandas>=2.3.0
+accelerate>=1.8.0
