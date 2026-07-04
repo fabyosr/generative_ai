@@ -62,7 +62,7 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
 
     if provider == "hf_llama31":
         endpoint = HuggingFaceEndpoint(
-            repo_id         = "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            repo_id         = "meta-llama/Llama-3.1-8B-Instruct",
             temperature     = temperature,
             return_full_text= False,
             max_new_tokens  = 1024,   # 3.1 suporta respostas mais longas
@@ -89,7 +89,7 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
 
     if provider == "hf_gemma2":
         endpoint = HuggingFaceEndpoint(
-            repo_id         = "google/gemma-2-9b-it",
+            repo_id         = "google/gemma-2-9b",
             temperature     = temperature,
             return_full_text= False,
             max_new_tokens  = 512,
@@ -107,7 +107,7 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
 
     if provider == "hf_sabia":
         endpoint = HuggingFaceEndpoint(
-            repo_id         = "maritaca-ai/sabia-3",
+            repo_id         = "maritaca-ai/sabia-7b",
             temperature     = temperature,
             return_full_text= False,
             max_new_tokens  = 512,

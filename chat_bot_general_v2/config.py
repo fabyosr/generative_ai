@@ -156,7 +156,7 @@ LLM_PROVIDERS: dict[str, str] = {
     "hf_qwen":      "HuggingFace (Qwen 2.5 7B)",
     "hf_gemma2":    "HuggingFace (Gemma 2 9B)",
     "hf_phi35":     "HuggingFace (Phi-3.5 Mini)",
-    "hf_sabia":     "HuggingFace (Sabiá 3 — PT-BR)",
+    "hf_sabia":     "HuggingFace (Sabiá 7b — PT-BR)",
 }
 
 # ---------------------------------------------------------------------------
