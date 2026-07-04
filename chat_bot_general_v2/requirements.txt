@@ -6,4 +6,6 @@ langchain_openai
 langchain_ollama
 
 better-profanity
+spacy
+sentence-transformers
 
