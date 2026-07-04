@@ -60,6 +60,60 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
             stream_usage= True,
         )
 
+    if provider == "hf_llama31":
+        endpoint = HuggingFaceEndpoint(
+            repo_id         = "meta-llama/Meta-Llama-3.1-8B-Instruct",
+            temperature     = temperature,
+            return_full_text= False,
+            max_new_tokens  = 1024,   # 3.1 suporta respostas mais longas
+        )
+        return ChatHuggingFace(llm=endpoint)
+
+    if provider == "hf_mistral":
+        endpoint = HuggingFaceEndpoint(
+            repo_id         = "mistralai/Mistral-7B-Instruct-v0.3",
+            temperature     = temperature,
+            return_full_text= False,
+            max_new_tokens  = 512,
+        )
+        return ChatHuggingFace(llm=endpoint)
+
+    if provider == "hf_qwen":
+        endpoint = HuggingFaceEndpoint(
+            repo_id         = "Qwen/Qwen2.5-7B-Instruct",
+            temperature     = temperature,
+            return_full_text= False,
+            max_new_tokens  = 512,
+        )
+        return ChatHuggingFace(llm=endpoint)
+
+    if provider == "hf_gemma2":
+        endpoint = HuggingFaceEndpoint(
+            repo_id         = "google/gemma-2-9b-it",
+            temperature     = temperature,
+            return_full_text= False,
+            max_new_tokens  = 512,
+        )
+        return ChatHuggingFace(llm=endpoint)
+
+    if provider == "hf_phi35":
+        endpoint = HuggingFaceEndpoint(
+            repo_id         = "microsoft/Phi-3.5-mini-instruct",
+            temperature     = temperature,
+            return_full_text= False,
+            max_new_tokens  = 512,
+        )
+        return ChatHuggingFace(llm=endpoint)
+
+    if provider == "hf_sabia":
+        endpoint = HuggingFaceEndpoint(
+            repo_id         = "maritaca-ai/sabia-3",
+            temperature     = temperature,
+            return_full_text= False,
+            max_new_tokens  = 512,
+        )
+        return ChatHuggingFace(llm=endpoint)
+
     raise ValueError(f"Provedor desconhecido: '{provider}'")
 
 

@@ -151,6 +151,12 @@ LLM_PROVIDERS: dict[str, str] = {
     "openai":       "OpenAI (GPT-4o-mini)",
     "ollama":       "Ollama (Phi-3)",
     "hf_endpoint":  "HuggingFace (Llama 3)",
+    "hf_llama31":   "HuggingFace (Llama 3.1 8B)",
+    "hf_mistral":   "HuggingFace (Mistral 7B)",
+    "hf_qwen":      "HuggingFace (Qwen 2.5 7B)",
+    "hf_gemma2":    "HuggingFace (Gemma 2 9B)",
+    "hf_phi35":     "HuggingFace (Phi-3.5 Mini)",
+    "hf_sabia":     "HuggingFace (Sabiá 3 — PT-BR)",
 }
 
 # ---------------------------------------------------------------------------
@@ -182,6 +188,12 @@ MODEL_CONTEXT_LIMITS: dict[str, int] = {
     "openai":      128_000,   # gpt-4o-mini
     "hf_endpoint":   8_000,   # Llama 3 8B
     "ollama":       16_000,   # Phi-3 mini (contexto padrão)
+    "hf_llama31":   131_072,   # Llama 3.1 — 128k tokens
+    "hf_mistral":    32_768,   # Mistral 7B v0.3
+    "hf_qwen":      131_072,   # Qwen 2.5 — 128k tokens
+    "hf_gemma2":      8_192,   # Gemma 2 9B
+    "hf_phi35":     131_072,   # Phi-3.5 Mini — 128k tokens
+    "hf_sabia":       8_192,   # Sabiá 3
 }
 
 # Alerta quando context window ultrapassar este percentual
