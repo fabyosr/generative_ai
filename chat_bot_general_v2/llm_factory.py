@@ -19,7 +19,6 @@ import os
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
-from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
 
 
@@ -52,14 +51,6 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
         )
         return ChatHuggingFace(llm=endpoint)
 
-    if provider == "ollama":
-        # Ollama só funciona com servidor local — não disponível no Streamlit Cloud
-        return ChatOllama(
-            model       = "phi-3",
-            temperature = temperature,
-            stream_usage= True,
-        )
-
     if provider == "hf_llama31":
         endpoint = HuggingFaceEndpoint(
             repo_id         = "meta-llama/Llama-3.1-8B-Instruct",
@@ -69,15 +60,6 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
         )
         return ChatHuggingFace(llm=endpoint)
 
-    if provider == "hf_mistral":
-        return ChatOpenAI(
-            model           = "mistralai/Mistral-7B-Instruct-v0.3",
-            base_url        = "https://router.huggingface.co/v1",
-            api_key         = os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
-            temperature     = temperature,
-            stream_usage    = True,
-        )
-
     if provider == "hf_qwen":
         return ChatOpenAI(
             model           = "Qwen/Qwen2.5-7B-Instruct",
@@ -85,32 +67,6 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
             api_key         = os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
             temperature     = temperature,
             stream_usage    = True,
-        )
-
-    if provider == "hf_gemma2":
-        return ChatOpenAI(
-            model           = "google/gemma-2-2b-it",
-            base_url        = "https://router.huggingface.co/v1",
-            api_key         = os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
-            temperature     = temperature,
-            stream_usage    = True,
-        )
-
-    if provider == "hf_phi35":
-        endpoint = HuggingFaceEndpoint(
-            repo_id         = "microsoft/Phi-3.5-mini-instruct",
-            temperature     = temperature,
-            return_full_text= False,
-            max_new_tokens  = 512,
-        )
-        return ChatHuggingFace(llm=endpoint)
-
-    if provider == "hf_sabia":
-        return HuggingFaceEndpoint(
-            repo_id="maritaca-ai/sabia-7b",
-            task="text-generation",
-            huggingfacehub_api_token=os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
-            temperature=0.3,
         )
 
     raise ValueError(f"Provedor desconhecido: '{provider}'")
@@ -137,19 +93,5 @@ def is_provider_available(provider: str) -> tuple[bool, str]:
         if not has_token:
             return False, "Token HUGGINGFACEHUB_API_TOKEN não encontrado."
         return True, ""
-
-    if provider == "ollama":
-        # Testa conexão com servidor Ollama local
-        try:
-            import httpx
-            r = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
-            if r.status_code == 200:
-                return True, ""
-            return False, "Servidor Ollama respondeu com erro."
-        except Exception:
-            return False, (
-                "Ollama não disponível (requer servidor local em localhost:11434). "
-                "Não funciona no Streamlit Cloud."
-            )
 
     return False, f"Provedor desconhecido: '{provider}'"

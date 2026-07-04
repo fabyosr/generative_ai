@@ -148,15 +148,10 @@ PERSONALITIES: dict[str, str] = {
 # Mapeamento de provedor → label legível
 # ---------------------------------------------------------------------------
 LLM_PROVIDERS: dict[str, str] = {
-    "openai":       "OpenAI (GPT-4o-mini)",
-    "ollama":       "Ollama (Phi-3)",
     "hf_endpoint":  "HuggingFace (Llama 3)",
     "hf_llama31":   "HuggingFace (Llama 3.1 8B)",
-    "hf_mistral":   "HuggingFace (Mistral 7B)",
     "hf_qwen":      "HuggingFace (Qwen 2.5 7B)",
-    "hf_gemma2":    "HuggingFace (Gemma 2 9B)",
-    "hf_phi35":     "HuggingFace (Phi-3.5 Mini)",
-    "hf_sabia":     "HuggingFace (Sabiá 7b — PT-BR)",
+    "openai":       "OpenAI (GPT-4o-mini)",
 }
 
 # ---------------------------------------------------------------------------
