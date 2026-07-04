@@ -283,10 +283,12 @@ def build_turn_record(
         output_toxicity_score  = output_gr_result.toxicity_score,
         # Recusa via System Prompt detectada por heurística léxica
         sp_refusal             = detect_sp_refusal(full_response),
-        # Sanitização — registra o que foi substituído no output para auditoria
+        # Sanitizacao -- registra o que foi substituido no output para auditoria
         was_sanitized          = sanitize_result.was_sanitized if sanitize_result else False,
         sanitized_rules        = sanitize_result.applied_rules if sanitize_result else [],
         sanitized_counts       = sanitize_result.rule_counts   if sanitize_result else {},
+        # Metricas textuais profundas -- None quando nao calculado (ex: turno bloqueado)
+        text_metrics           = text_metrics,
     )
 
 
@@ -361,10 +363,35 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
             # recusou por conta das regras de segurança do safety prompt
             "Recusa via SP":        "🛡️ Sim" if t.sp_refusal else "✅ Ok",
 
-            # Sanitização silenciosa — substituições aplicadas no output antes
-            # de exibir ao usuário (PII, palavras fixas, regex customizado)
+            # Sanitizacao silenciosa
             "Sanitizado":           "🧹 Sim" if t.was_sanitized else "✅ Ok",
-            "Regras Sanitização":   ", ".join(t.sanitized_rules) if t.sanitized_rules else "—",
+            "Regras Sanitizacao":   ", ".join(t.sanitized_rules) if t.sanitized_rules else "—",
+
+            # Text Analytics -- metricas textuais profundas
+            # Colunas selecionadas; objeto completo (61 campos) em t.text_metrics
+            "Q Palavras":           t.text_metrics.q_words              if t.text_metrics else 0,
+            "R Palavras":           t.text_metrics.r_words              if t.text_metrics else 0,
+            "R Paragrafos":         t.text_metrics.r_paragraphs         if t.text_metrics else 0,
+            "Q Flesch":             round(t.text_metrics.q_flesch,    1) if t.text_metrics else 0.0,
+            "R Flesch":             round(t.text_metrics.r_flesch,    1) if t.text_metrics else 0.0,
+            "Flesch Gap":           round(t.text_metrics.flesch_gap,  1) if t.text_metrics else 0.0,
+            "R Gunning Fog":        round(t.text_metrics.r_gunning_fog, 1) if t.text_metrics else 0.0,
+            "R TTR":                round(t.text_metrics.r_ttr,       3) if t.text_metrics else 0.0,
+            "R MATTR":              round(t.text_metrics.r_mattr,     3) if t.text_metrics else 0.0,
+            "R Hedge Ratio":        round(t.text_metrics.r_hedge_ratio, 3) if t.text_metrics else 0.0,
+            "Q Sentimento":         round(t.text_metrics.q_sentiment_polarity, 3) if t.text_metrics else 0.0,
+            "R Sentimento":         round(t.text_metrics.r_sentiment_polarity, 3) if t.text_metrics else 0.0,
+            "R Formalidade":        round(t.text_metrics.r_formality_score,    3) if t.text_metrics else 0.0,
+            "Q Tipo":               t.text_metrics.q_type               if t.text_metrics else "",
+            "Q Especificidade":     round(t.text_metrics.q_specificity_score, 3) if t.text_metrics else 0.0,
+            "Sem Similaridade":     round(t.text_metrics.semantic_similarity, 3) if t.text_metrics else 0.0,
+            "Lexical Overlap":      round(t.text_metrics.lexical_overlap,     3) if t.text_metrics else 0.0,
+            "Response Novelty":     round(t.text_metrics.response_novelty,    3) if t.text_metrics else 0.0,
+            "Effort Ratio":         round(t.text_metrics.effort_ratio,        2) if t.text_metrics else 0.0,
+            "Info Gain":            round(t.text_metrics.information_gain,    3) if t.text_metrics else 0.0,
+            "Follow-up":            "🔁 Sim" if (t.text_metrics and t.text_metrics.is_followup) else "✅ Ok",
+            "NER Total":            t.text_metrics.r_ner_total          if t.text_metrics else 0,
+            "Analytics (ms)":       round(t.text_metrics.processing_ms, 1)  if t.text_metrics else 0.0,
         })
 
     df = pd.DataFrame(rows)
@@ -372,7 +399,7 @@ def turn_log_to_dataframe(turn_log: list[TurnRecord]):
     # Garante tipos numéricos corretos para ordenação e filtros
     int_cols = ["# Turno", "Tokens Usuário", "Tokens Input LLM",
                 "Tokens Output LLM", "Tokens Raciocínio"]
-    float_cols = ["Temperature", "Latência (s)", "Tokens/s", "Custo Turno (USD)", "Input GR Score", "Output GR Score", "Context Window %", "Token Efficiency", "Input Toxicidade", "Output Toxicidade"]
+    float_cols = ["Temperature", "Latência (s)", "Tokens/s", "Custo Turno (USD)", "Input GR Score", "Output GR Score", "Context Window %", "Token Efficiency", "Input Toxicidade", "Output Toxicidade", "Q Flesch", "R Flesch", "Flesch Gap", "R Gunning Fog", "R TTR", "R MATTR", "R Hedge Ratio", "Q Sentimento", "R Sentimento", "R Formalidade", "Q Especificidade", "Sem Similaridade", "Lexical Overlap", "Response Novelty", "Effort Ratio", "Info Gain", "Analytics (ms)"]
     for c in int_cols:
         df[c] = df[c].astype(int)
     for c in float_cols:

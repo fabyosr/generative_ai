@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from chat_chain import build_stream
 from config import DEFAULT_METRICS, LLM_PROVIDERS, PERSONALITIES
 from sanitizer import sanitize, sanitizer_rules_summary
+from text_analytics import analyze as text_analyze, analytics_status
 from guardrails import (
     GuardrailLayer,
     GuardrailResult,
@@ -397,6 +398,70 @@ def _render_sidebar() -> tuple[str, str, float]:
                                 icon="🚫",
                             )
 
+        # ── Text Analytics ─────────────────────────────────────────────────
+        with st.expander("📊 Text Analytics", expanded=False):
+            # Status das dependencias
+            astatus = analytics_status()
+            c1, c2, c3 = st.columns(3)
+            c1.metric("spaCy",          "✅ ON" if astatus["spacy"] else "⚠️ OFF",
+                      help=f"Modelo: {astatus['spacy_model']}")
+            c2.metric("Embeddings",     "✅ ON" if astatus["sentence_transformers"] else "⚠️ OFF",
+                      help=f"Modelo: {astatus['embedding_model']}")
+            c3.metric("TextBlob",       "✅ ON" if astatus["textblob"] else "⚠️ OFF")
+
+            if not astatus["spacy"]:
+                st.caption("⚠️ spaCy indisponivel -- instale: pip install spacy && python -m spacy download pt_core_news_sm")
+            if not astatus["sentence_transformers"]:
+                st.caption("⚠️ sentence-transformers indisponivel -- instale: pip install sentence-transformers")
+
+            st.markdown("---")
+
+            # KPIs agregados da sessao
+            log = st.session_state.turn_log
+            turns_with_ta = [t for t in log if t.text_metrics is not None]
+            if not turns_with_ta:
+                st.caption("Nenhuma analise disponivel ainda.")
+            else:
+                # Medias das metricas mais relevantes
+                avg_sim    = sum(t.text_metrics.semantic_similarity for t in turns_with_ta) / len(turns_with_ta)
+                avg_flesch = sum(t.text_metrics.r_flesch             for t in turns_with_ta) / len(turns_with_ta)
+                avg_ttr    = sum(t.text_metrics.r_ttr                for t in turns_with_ta) / len(turns_with_ta)
+                avg_novelty= sum(t.text_metrics.response_novelty     for t in turns_with_ta) / len(turns_with_ta)
+                followups  = sum(1 for t in turns_with_ta if t.text_metrics.is_followup)
+                avg_ms     = sum(t.text_metrics.processing_ms        for t in turns_with_ta) / len(turns_with_ta)
+
+                # Linha 1 -- qualidade semantica
+                c1, c2, c3 = st.columns(3)
+                c1.metric("🧲 Sim. Semantica", f"{avg_sim:.3f}",
+                          help="Media de cosine similarity query↔response. Ideal > 0.60.")
+                c2.metric("📖 Flesch Medio",   f"{avg_flesch:.1f}",
+                          help="Legibilidade media das respostas (0-100, maior=mais facil).")
+                c3.metric("🔵 Response Novelty", f"{avg_novelty:.3f}",
+                          help="Conteudo genuinamente novo nas respostas (1 - lexical overlap).")
+
+                # Linha 2 -- riqueza e comportamento
+                c4, c5, c6 = st.columns(3)
+                c4.metric("📊 TTR Medio",      f"{avg_ttr:.3f}",
+                          help="Riqueza vocabular media das respostas (TTR).")
+                c5.metric("🔁 Follow-ups",     followups,
+                          help="Turnos onde o usuario reformulou a query anterior.")
+                c6.metric("⏱️ Analytics/turno",  f"{avg_ms:.0f}ms",
+                          help="Tempo medio de processamento do text_analytics.py.")
+
+                # Distribuicao de tipos de query
+                qtypes = {}
+                for t in turns_with_ta:
+                    qt = t.text_metrics.q_type or "desconhecido"
+                    qtypes[qt] = qtypes.get(qt, 0) + 1
+                if qtypes:
+                    st.markdown("**Distribuicao de tipos de query:**")
+                    total_qt = sum(qtypes.values())
+                    for qt, count in sorted(qtypes.items(), key=lambda x: x[1], reverse=True):
+                        st.progress(
+                            min(int(count / total_qt * 100), 100),
+                            text=f"{qt}: {count} ({count/total_qt*100:.0f}%)",
+                        )
+
         # ── Sanitização ──────────────────────────────────────────────────────
         with st.expander("🧹 Sanitização de Output", expanded=False):
             # Resumo de todas as regras ativas no sanitizer.py
@@ -503,6 +568,15 @@ with tab_chat:
 
         user_ts = datetime.now(timezone.utc)
 
+        # Captura query anterior para follow-up detection no text_analytics
+        prev_query = next(
+            (m.content for m in reversed(st.session_state.chat_history[:-1])
+             if hasattr(m, 'content') and isinstance(m, HumanMessage)),
+            None,
+        )
+        # Posicao do turno na sessao (1-based)
+        session_pos = len(st.session_state.turn_log) + 1
+
         st.session_state.chat_history.append(HumanMessage(content=user_query))
 
         # Re-renderiza histórico + nova mensagem dentro do container
@@ -605,6 +679,21 @@ with tab_chat:
                 icon="⚠️",
             )
 
+
+        # ── Text Analytics ───────────────────────────────────────────────────────────
+        # Executado em background apos o stream -- zero impacto na UX.
+        # analyze() eh fail-safe: retorna zeros se spaCy/embedder indisponiveis.
+        # None eh passado quando o input foi bloqueado (sem resposta real).
+        try:
+            tx_metrics = text_analyze(
+                query            = user_query,
+                response         = full_response,
+                prev_query       = prev_query,
+                session_position = session_pos,
+            )
+        except Exception:
+            tx_metrics = None   # fail-safe: nunca quebra o fluxo principal
+
         # ── Pós-processamento ─────────────────────────────────────────────────
         latency     = end_time - start_time
         stream_meta = apply_token_fallback(stream_meta, user_query, full_response)
@@ -630,6 +719,7 @@ with tab_chat:
             input_gr_result  = input_gr,
             output_gr_result = output_gr,
             sanitize_result  = san_result,   # None quando bloqueado pelo guardrail
+            text_metrics     = tx_metrics,   # TextMetrics do text_analytics.py
         )
         st.session_state.turn_log.append(turn)
         st.session_state.chat_history.append(AIMessage(content=full_response))
@@ -727,6 +817,30 @@ with tab_log:
                                         help="🧹 Sim = pelo menos uma substituição foi aplicada no output."),
                 "Regras Sanitização": st.column_config.TextColumn(width="large",
                                         help="Lista de regras aplicadas: PII:CPF, WORD:foo, REGEX:bar."),
+                # Text Analytics -- colunas selecionadas
+                "Q Palavras":          st.column_config.NumberColumn(width="small", help="Total de palavras na query."),
+                "R Palavras":          st.column_config.NumberColumn(width="small", help="Total de palavras na resposta."),
+                "R Paragrafos":        st.column_config.NumberColumn(width="small", help="Paragrafos na resposta."),
+                "Q Flesch":            st.column_config.NumberColumn(format="%.1f", width="small", help="Legibilidade da query (0-100, maior=mais facil)."),
+                "R Flesch":            st.column_config.NumberColumn(format="%.1f", width="small", help="Legibilidade da resposta."),
+                "Flesch Gap":          st.column_config.NumberColumn(format="%.1f", width="small", help="Diferenca de legibilidade resposta-query."),
+                "R Gunning Fog":       st.column_config.NumberColumn(format="%.1f", width="small", help="Anos de escolaridade para entender a resposta."),
+                "R TTR":               st.column_config.NumberColumn(format="%.3f", width="small", help="Type-Token Ratio: riqueza vocabular da resposta."),
+                "R MATTR":             st.column_config.NumberColumn(format="%.3f", width="small", help="Moving Average TTR: TTR normalizado por janela de 50 tokens."),
+                "R Hedge Ratio":       st.column_config.NumberColumn(format="%.3f", width="small", help="Proporcao de marcadores de incerteza na resposta."),
+                "Q Sentimento":        st.column_config.NumberColumn(format="%.3f", width="small", help="Polaridade da query: -1 (neg) a +1 (pos)."),
+                "R Sentimento":        st.column_config.NumberColumn(format="%.3f", width="small", help="Polaridade da resposta: -1 (neg) a +1 (pos)."),
+                "R Formalidade":       st.column_config.NumberColumn(format="%.3f", width="small", help="Score de formalidade da resposta: 0 (informal) a 1 (formal)."),
+                "Q Tipo":              st.column_config.TextColumn(width="small", help="Tipo de query: factual, procedimental, comparativa, etc."),
+                "Q Especificidade":    st.column_config.NumberColumn(format="%.3f", width="small", help="Score de especificidade da query: 0 (vaga) a 1 (especifica)."),
+                "Sem Similaridade":    st.column_config.NumberColumn(format="%.3f", width="small", help="Cosine similarity semantica entre query e resposta."),
+                "Lexical Overlap":     st.column_config.NumberColumn(format="%.3f", width="small", help="Proporcao de palavras da query presentes na resposta."),
+                "Response Novelty":    st.column_config.NumberColumn(format="%.3f", width="small", help="Conteudo genuinamente novo na resposta (1 - overlap)."),
+                "Effort Ratio":        st.column_config.NumberColumn(format="%.2f",  width="small", help="Palavras resposta / palavras query."),
+                "Info Gain":           st.column_config.NumberColumn(format="%.3f", width="small", help="Ganho de informacao: entropia resposta - entropia query."),
+                "Follow-up":           st.column_config.TextColumn(width="small", help="Query similar a anterior (reformulacao detectada)."),
+                "NER Total":           st.column_config.NumberColumn(width="small", help="Total de entidades nomeadas detectadas na resposta."),
+                "Analytics (ms)":      st.column_config.NumberColumn(format="%.1f",  width="small", help="Tempo de processamento do text_analytics.py."),
             },
         )
 
