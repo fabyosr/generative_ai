@@ -109,7 +109,7 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
         return HuggingFaceEndpoint(
             repo_id="maritaca-ai/sabia-7b",
             task="text-generation",
-            huggingfacehub_api_token=sec_token,
+            huggingfacehub_api_token=os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
             temperature=0.3,
             model_kwargs={ "max_length": 512}
         )
