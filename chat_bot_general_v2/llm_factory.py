@@ -106,12 +106,12 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
         return ChatHuggingFace(llm=endpoint)
 
     if provider == "hf_sabia":
-        return ChatOpenAI(
-            model           = "maritaca-ai/sabia-7b",
-            base_url        = "https://router.huggingface.co/v1",
-            api_key         = os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
-            temperature     = temperature,
-            stream_usage    = True,
+        return HuggingFaceEndpoint(
+            repo_id="maritaca-ai/sabia-7b",
+            task="text-generation",
+            huggingfacehub_api_token=sec_token,
+            temperature=0.3,
+            model_kwargs={ "max_length": 512}
         )
 
     raise ValueError(f"Provedor desconhecido: '{provider}'")
