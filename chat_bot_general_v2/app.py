@@ -858,3 +858,92 @@ with tab_log:
             mime      = "text/csv",
             width     = "stretch",
         )
+
+        # ── Glossário de métricas ─────────────────────────────────────────────
+        with st.expander("📖 Glossário de Métricas", expanded=False):
+
+            st.markdown("### 🔢 Métricas de Tokens e Custo")
+            st.markdown("""
+| Métrica | Descrição | Valores de referência |
+|---|---|---|
+| **Tokens Usuário** | Estimativa de tokens do texto digitado pelo usuário (chars ÷ 4) | Típico: 5–50 |
+| **Tokens Input LLM** | Total de tokens enviados ao modelo: system prompt + histórico + query atual. Representa o tamanho real da janela de contexto consumida e o que é cobrado como input. | Cresce a cada turno |
+| **Tokens Output LLM** | Tokens gerados pelo modelo na resposta. Cobrados separadamente — custo maior por token que o input. | Típico: 50–500 |
+| **Tokens Raciocínio** | Tokens internos de chain-of-thought usados por modelos com raciocínio estendido (ex: o1). Não aparecem na resposta. | 0 na maioria dos modelos |
+| **Custo Turno (USD)** | Custo estimado deste turno: `(input_tokens/1M × $0.15) + (output_tokens/1M × $0.60)`. Baseado na tabela GPT-4o-mini. | USD 0.000001–0.001 |
+| **Context Window %** | Percentual da janela de contexto do modelo consumida no último turno. Acima de 80% o modelo começa a "esquecer" mensagens antigas. | Alerta: > 80% |
+| **Token Efficiency** | Razão `output_tokens ÷ input_tokens`. Valores muito baixos (< 0.05) indicam que o contexto acumulado domina o custo sem gerar output proporcional. | Ideal: 0.10–0.50 |
+""")
+
+            st.markdown("### ⏱️ Métricas de Performance")
+            st.markdown("""
+| Métrica | Descrição | Valores de referência |
+|---|---|---|
+| **Latência (s)** | Tempo total do início do stream até o último token recebido. | Bom: < 3s. Alerta: > 8s |
+| **Tokens/s** | Velocidade de geração: `output_tokens ÷ latência`. Varia conforme carga do servidor. | Típico GPT-4o-mini: 40–80 t/s |
+| **Finish Reason** | Motivo pelo qual o modelo parou de gerar. `stop` = resposta completa. `length` = cortada pelo limite de tokens. `content_filter` = bloqueada pelo provedor. | Ideal: stop |
+| **Resposta Cortada** | Indica `finish_reason = length` ou `max_tokens`. A resposta foi interrompida antes de terminar. Reformule a pergunta em partes menores ou limpe o histórico. | ✅ Ok / ✂️ Sim |
+| **Analytics (ms)** | Tempo de processamento do módulo `text_analytics.py` para calcular as métricas textuais do turno. | Típico: 50–500ms |
+""")
+
+            st.markdown("### 🛡️ Métricas de Guardrails e Segurança")
+            st.markdown("""
+| Métrica | Descrição | Valores de referência |
+|---|---|---|
+| **Input Bloqueado** | O input do usuário foi bloqueado por alguma camada de guardrail antes de chegar ao modelo. | ✅ Ok / 🚫 Sim |
+| **Input GR Layer** | Camada que tomou a decisão de bloqueio: `better-profanity` (léxico), `openai-moderation`, `llamaguard`, ou `none` (passou em todas). | — |
+| **Input GR Categoria** | Categoria de risco detectada: `profanity`, `hate`, `violence`, `self-harm`, `sexual`, `S1`–`S13` (LlamaGuard), etc. | safe = sem detecção |
+| **Input GR Score** | Score de confiança da camada que bloqueou (0.0–1.0). Score 1.0 = certeza absoluta (léxico). Scores menores indicam decisão probabilística. | 1.0 = léxico. 0.40–1.0 = ML |
+| **Input Toxicidade** | Score contínuo da OpenAI Moderation API para a categoria mais tóxica do input. Preenchido **mesmo quando não bloqueado** — permite rastrear mensagens na zona cinza. | 0.0 = seguro. > 0.40 = zona cinza. > 0.70 = alto risco |
+| **Input Tox Categoria** | Categoria com maior score de toxicidade no input (ex: `violence`, `hate`, `harassment`). | — |
+| **Output Toxicidade** | Score de toxicidade da resposta gerada pelo modelo, checado antes de exibir ao usuário. | Ideal: < 0.10 |
+| **Recusa via SP** | Os guardrails aprovaram o input, mas o modelo recusou semanticamente por conta das regras do Safety Prompt (RULE 1–7). Detectado por heurística léxica na resposta. | ✅ Ok / 🛡️ Sim |
+""")
+
+            st.markdown("### 🧹 Métricas de Sanitização")
+            st.markdown("""
+| Métrica | Descrição |
+|---|---|
+| **Sanitizado** | Pelo menos uma substituição foi aplicada no output antes de exibir ao usuário. O texto exibido pode diferir do texto bruto da LLM. |
+| **Regras Sanitização** | Lista de regras aplicadas no turno, ex: `PII:CPF, PII:EMAIL`. Prefixo `PII:` = dado pessoal. `WORD:` = palavra fixa. `REGEX:` = padrão customizado. |
+""")
+
+            st.markdown("### 📝 Métricas Textuais — Superfície")
+            st.markdown("""
+| Métrica | Descrição | Valores de referência |
+|---|---|---|
+| **Q Palavras** | Total de palavras na mensagem do usuário (query). | Típico: 5–50 |
+| **R Palavras** | Total de palavras na resposta do modelo. | Típico: 50–400 |
+| **R Parágrafos** | Número de parágrafos na resposta (separados por linha em branco). Respostas bem estruturadas tendem a ter 2–5 parágrafos. | Ideal: 2–6 |
+| **Q Flesch** | Índice de legibilidade Flesch da query (0–100). Quanto maior, mais fácil de ler. Queries complexas (técnicas, longas) têm score mais baixo. | 0–30 difícil. 60–100 fácil |
+| **R Flesch** | Índice de legibilidade Flesch da resposta. Permite avaliar se o modelo está respondendo em nível de complexidade adequado para o usuário. | Ideal para suporte: > 50 |
+| **Flesch Gap** | Diferença `R Flesch − Q Flesch`. Positivo = modelo respondeu mais simplesmente que a pergunta (bom para suporte). Negativo = resposta mais complexa que a pergunta (pode confundir). | Ideal: próximo de 0 ou levemente positivo |
+| **R Gunning Fog** | Anos de escolaridade estimados para compreender a resposta. Baseado em percentual de palavras complexas (3+ sílabas). | Ideal: 8–12 anos |
+""")
+
+            st.markdown("### 📊 Métricas Textuais — Riqueza e Qualidade")
+            st.markdown("""
+| Métrica | Descrição | Valores de referência |
+|---|---|---|
+| **R TTR** | Type-Token Ratio: palavras únicas ÷ total de palavras. Mede diversidade vocabular da resposta. Decresce naturalmente em textos longos. | > 0.70 rico. < 0.40 repetitivo |
+| **R MATTR** | Moving Average TTR (janela de 50 tokens). Versão normalizada do TTR que não penaliza textos longos. Métrica mais confiável que o TTR simples para comparações. | > 0.70 rico |
+| **R Hedge Ratio** | Proporção de marcadores de incerteza ("talvez", "possivelmente") sobre total de marcadores epistêmicos. Equilíbrio adequado indica calibração: o modelo não afirma com certeza o que é incerto. | Ideal: 0.30–0.70 |
+| **Q Sentimento** | Polaridade emocional da query do usuário: −1.0 (muito negativo) a +1.0 (muito positivo). Permite identificar usuários frustrados ou insatisfeitos. | Neutro: −0.1 a +0.1 |
+| **R Sentimento** | Polaridade emocional da resposta do modelo. Respostas de assistentes devem ser levemente positivas ou neutras. Valores muito negativos são problemáticos. | Ideal: 0.0 a +0.3 |
+| **R Formalidade** | Score de formalidade da resposta (0.0 = informal a 1.0 = formal). Cruzar com a personalidade ativa: "Técnico 💻" deve ter score alto; "Descontraído ☕" pode ter score menor. | Depende da personalidade |
+""")
+
+            st.markdown("### 🔗 Métricas de Alinhamento Query/Response")
+            st.markdown("""
+| Métrica | Descrição | Valores de referência |
+|---|---|---|
+| **Q Tipo** | Classificação automática do tipo de query: `factual` (o que é X?), `procedimental` (como fazer X?), `comparativa` (X vs Y?), `opinativa` (o que acha de X?), `criativa` (escreva X), `ambigua` (difícil classificar). | — |
+| **Q Especificidade** | Score de especificidade da query (0.0–1.0). Queries vagas (pronomes sem referente, sem contexto) tendem a gerar respostas genéricas. | > 0.50 específica |
+| **Sem Similaridade** | Cosine similarity entre os embeddings semânticos da query e da resposta. Mede se a resposta está semanticamente alinhada com a pergunta. Valores baixos indicam resposta fora do tema. | Alerta: < 0.50 |
+| **Lexical Overlap** | Proporção de palavras da query que aparecem na resposta. Alto overlap pode indicar que o modelo está apenas parafraseando a pergunta sem adicionar valor. | Típico: 0.20–0.60 |
+| **Response Novelty** | `1 − Lexical Overlap`. Proporção de conteúdo genuinamente novo na resposta. Complementar ao lexical overlap. | Ideal: > 0.50 |
+| **Effort Ratio** | `palavras_resposta ÷ palavras_query`. Mede a proporção de esforço do modelo em relação ao esforço do usuário. Valores muito altos = verbose. Muito baixos = resposta rasa. | Ideal: 3–15x |
+| **Info Gain** | Ganho de informação estimado: `entropia_resposta − entropia_query`. Positivo = resposta trouxe mais informação que a pergunta continha. Negativo = resposta circular ou repetitiva. | Ideal: positivo |
+| **Follow-up** | A query atual é semanticamente similar à query do turno anterior (similaridade > 0.85). Indica que o usuário reformulou a pergunta — possível sinal de insatisfação com a resposta anterior. | ✅ Ok / 🔁 Sim |
+| **NER Total** | Total de entidades nomeadas detectadas na resposta (pessoas, organizações, datas, valores monetários, locais). Respostas com muitas entidades tendem a ser mais informativas e verificáveis. | Depende do contexto |
+""")
