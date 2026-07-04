@@ -136,6 +136,9 @@ class TurnRecord:
     sanitized_rules:       list   # regras aplicadas ex: ["PII:CPF", "WORD:foo"]
     sanitized_counts:      dict   # contagem por regra ex: {"PII:EMAIL": 2}
 
+    # Metricas textuais profundas
+    text_metrics:          object = None   # TextMetrics | None
+
 
 # ---------------------------------------------------------------------------
 # Funções utilitárias — sem efeitos colaterais
@@ -235,6 +238,7 @@ def build_turn_record(
     input_gr_result,               # GuardrailResult
     output_gr_result,              # GuardrailResult
     sanitize_result = None,        # SanitizeResult do sanitizer.py (None = não aplicado)
+    text_metrics     = None,       # TextMetrics do text_analytics.py (None = não calculado)
 ) -> TurnRecord:
     """
     Constrói o TurnRecord completo após o fim do stream.
