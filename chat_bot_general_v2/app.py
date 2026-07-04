@@ -654,7 +654,7 @@ with tab_chat:
                 output_gr = check_output(full_response, provider=provider_key)
                 if not output_gr.safe:
                     placeholder.warning(BLOCK_MESSAGE_OUTPUT)
-                    full_response = BLOCK_MESSAGE_OUTPUT
+                    full_response = BLOCK_MESSAGE_OUTPUT + '\n' + full_response
                     san_result    = None   # não sanitiza resposta de bloqueio
                 else:
                     # ── Sanitização silenciosa ─────────────────────────────
