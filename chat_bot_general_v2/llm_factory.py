@@ -70,31 +70,31 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
         return ChatHuggingFace(llm=endpoint)
 
     if provider == "hf_mistral":
-        endpoint = HuggingFaceEndpoint(
-            repo_id         = "mistralai/Mistral-7B-Instruct-v0.3",
+        return ChatOpenAI(
+            model           = "mistralai/Mistral-7B-Instruct-v0.3",
+            base_url        = "https://router.huggingface.co/v1",
+            api_key         = os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
             temperature     = temperature,
-            return_full_text= False,
-            max_new_tokens  = 512,
+            stream_usage    = True,
         )
-        return ChatHuggingFace(llm=endpoint)
 
     if provider == "hf_qwen":
-        endpoint = HuggingFaceEndpoint(
-            repo_id         = "Qwen/Qwen2.5-7B-Instruct",
+        return ChatOpenAI(
+            model           = "Qwen/Qwen2.5-7B-Instruct",
+            base_url        = "https://router.huggingface.co/v1",
+            api_key         = os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
             temperature     = temperature,
-            return_full_text= False,
-            max_new_tokens  = 512,
+            stream_usage    = True,
         )
-        return ChatHuggingFace(llm=endpoint)
 
     if provider == "hf_gemma2":
-        endpoint = HuggingFaceEndpoint(
-            repo_id         = "google/gemma-2-9b",
+        return ChatOpenAI(
+            model           = "google/gemma-2-2b-it",
+            base_url        = "https://router.huggingface.co/v1",
+            api_key         = os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
             temperature     = temperature,
-            return_full_text= False,
-            max_new_tokens  = 512,
+            stream_usage    = True,
         )
-        return ChatHuggingFace(llm=endpoint)
 
     if provider == "hf_phi35":
         endpoint = HuggingFaceEndpoint(
@@ -106,13 +106,13 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
         return ChatHuggingFace(llm=endpoint)
 
     if provider == "hf_sabia":
-        endpoint = HuggingFaceEndpoint(
-            repo_id         = "maritaca-ai/sabia-7b",
+        return ChatOpenAI(
+            model           = "maritaca-ai/sabia-7b",
+            base_url        = "https://router.huggingface.co/v1",
+            api_key         = os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
             temperature     = temperature,
-            return_full_text= False,
-            max_new_tokens  = 512,
+            stream_usage    = True,
         )
-        return ChatHuggingFace(llm=endpoint)
 
     raise ValueError(f"Provedor desconhecido: '{provider}'")
 
