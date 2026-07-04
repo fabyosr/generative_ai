@@ -111,7 +111,6 @@ def get_llm(provider: str, temperature: float, **kwargs) -> BaseChatModel:
             task="text-generation",
             huggingfacehub_api_token=os.environ.get("HUGGINGFACEHUB_API_TOKEN", ""),
             temperature=0.3,
-            model_kwargs={ "max_length": 512}
         )
 
     raise ValueError(f"Provedor desconhecido: '{provider}'")
