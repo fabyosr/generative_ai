@@ -28,10 +28,10 @@ import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage
 
 # --- Módulos de negócio (sem dependência Streamlit) ---
-from secrets import load_api_keys, get_available_providers
-from models import get_model
-from rag import build_retriever, build_rag_chain
-from metrics import (
+from core.secrets import load_api_keys, get_available_providers
+from core.models import get_model
+from core.rag import build_retriever, build_rag_chain
+from core.metrics import (
     LatencyTimer,
     compute_history_metrics,
     compute_rag_metrics,
@@ -39,9 +39,9 @@ from metrics import (
 )
 
 # --- Módulos de UI (apenas renderização) ---
-from sidebar import render_sidebar
-from chat import render_chat_history, render_user_message, render_ai_response
-from observability import render_observability_panel
+from ui.sidebar import render_sidebar
+from ui.chat import render_chat_history, render_user_message, render_ai_response
+from ui.observability import render_observability_panel
 
 
 # =============================================================================
