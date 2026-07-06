@@ -1,0 +1,38 @@
+# =============================================================================
+# requirements.txt — Dependências do RAG Document Chat
+# =============================================================================
+# Instale com:  pip install -r requirements.txt
+#
+# Versões mínimas testadas. Use um virtualenv ou conda para isolar o ambiente.
+# =============================================================================
+
+# --- Streamlit ---
+streamlit>=1.35.0
+
+# --- LangChain core (atualizado para >=0.2) ---
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+langchain-text-splitters>=0.2.0
+
+# --- Provedores LLM ---
+langchain-openai>=0.1.0
+langchain-groq>=0.1.0
+langchain-huggingface>=0.0.3
+
+# --- Embeddings e vetores ---
+faiss-cpu>=1.7.4
+sentence-transformers>=3.0.0     # necessário pelo BGE-M3
+
+# --- Loaders de documentos ---
+pypdf>=4.0.0                     # backend do PyPDFLoader (substitui PyPDF2)
+
+# --- Tokenização precisa (OpenAI/Groq) ---
+tiktoken>=0.7.0
+
+# --- Variáveis de ambiente ---
+python-dotenv>=1.0.0
+
+# --- Utilitários ---
+torch>=2.0.0                     # necessário pelo HuggingFace Embeddings
+huggingface-hub>=0.23.0
