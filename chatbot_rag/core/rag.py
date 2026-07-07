@@ -201,8 +201,8 @@ def build_rag_chain(llm, retriever):
     """
     context_prompt, qa_prompt = _build_prompts()
 
-    st.markdown(f'context_prompt: {context_prompt}')
-    st.markdown(f'qa_prompt: {qa_prompt}')
+    print(f'context_prompt: {context_prompt}')
+    print(f'qa_prompt: {qa_prompt}')
 
     # Chain 1: recupera documentos consciente do histórico
     # create_history_aware_retriever: Este módulo ajusta as perguntas do usuário para o contexto da conversa. Se você perguntou "Onde fica?" e depois "Qual é o telefone?", o módulo usa o histórico para reescrever a segunda pergunta como "Qual é o telefone do 'Onde fica'?" antes de buscar nos seus arquivos.
