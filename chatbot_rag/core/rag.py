@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-import streamlit as st
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
@@ -31,6 +30,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+
 
 # ---------------------------------------------------------------------------
 # Constantes de configuração do pipeline
@@ -45,8 +45,10 @@ CHUNK_OVERLAP = 200    # sobreposição para manter contexto entre chunks
 
 # Configurações do retriever MMR
 # MMR (Maximal Marginal Relevance) equilibra relevância e diversidade
-RETRIEVER_K       = 3   # chunks retornados ao LLM
-RETRIEVER_FETCH_K = 4   # chunks candidatos antes da diversificação MMR
+# fetch_k elevado para fornecer candidatos suficientes ao reranker:
+#   FAISS busca 10 candidatos → reranker cross-encoder seleciona os 3 melhores
+RETRIEVER_K       = 10  # chunks candidatos buscados pelo FAISS (feed para o reranker)
+RETRIEVER_FETCH_K = 20  # pool MMR antes da diversificação
 
 # Diretório de persistência do índice FAISS
 VECTORSTORE_PATH = "vectorstore/db_faiss"
@@ -56,7 +58,7 @@ VECTORSTORE_PATH = "vectorstore/db_faiss"
 # Etapa 1 — Carregamento e indexação de documentos
 # ---------------------------------------------------------------------------
 
-def build_retriever(uploaded_files: list) -> FAISS:
+def build_retriever(uploaded_files: list, embeddings=None):
     """
     Constrói o retriever a partir de uma lista de arquivos PDF enviados.
 
@@ -70,6 +72,11 @@ def build_retriever(uploaded_files: list) -> FAISS:
 
     Args:
         uploaded_files: Lista de UploadedFile (Streamlit) com PDFs.
+        embeddings:     Instância de HuggingFaceEmbeddings já carregada.
+                        Se None, cria uma nova instância internamente.
+                        Passar a instância compartilhada do app.py evita
+                        carregar o modelo BGE-M3 duas vezes na memória
+                        (retriever + semantic cache usam o mesmo objeto).
 
     Returns:
         VectorStoreRetriever: Retriever FAISS configurado para MMR.
@@ -93,8 +100,9 @@ def build_retriever(uploaded_files: list) -> FAISS:
     )
     splits = splitter.split_documents(docs)
 
-    # --- 3. Gerar embeddings ---
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    # --- 3. Usar embeddings fornecidos ou criar nova instância ---
+    if embeddings is None:
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
 
     # --- 4. Criar índice FAISS e persistir ---
     vectorstore = FAISS.from_documents(splits, embeddings)
@@ -102,6 +110,7 @@ def build_retriever(uploaded_files: list) -> FAISS:
     vectorstore.save_local(VECTORSTORE_PATH)
 
     # --- 5. Retornar retriever com MMR ---
+    # fetch_k elevado para fornecer candidatos suficientes ao reranker
     retriever = vectorstore.as_retriever(
         search_type="mmr",
         search_kwargs={"k": RETRIEVER_K, "fetch_k": RETRIEVER_FETCH_K},
@@ -201,11 +210,7 @@ def build_rag_chain(llm, retriever):
     """
     context_prompt, qa_prompt = _build_prompts()
 
-    print(f'context_prompt: {context_prompt}')
-    print(f'qa_prompt: {qa_prompt}')
-
     # Chain 1: recupera documentos consciente do histórico
-    # create_history_aware_retriever: Este módulo ajusta as perguntas do usuário para o contexto da conversa. Se você perguntou "Onde fica?" e depois "Qual é o telefone?", o módulo usa o histórico para reescrever a segunda pergunta como "Qual é o telefone do 'Onde fica'?" antes de buscar nos seus arquivos.
     history_aware_retriever = create_history_aware_retriever(
         llm=llm,
         retriever=retriever,
@@ -213,7 +218,6 @@ def build_rag_chain(llm, retriever):
     )
 
     # Chain 2: gera resposta usando os documentos recuperados
-    # create_stuff_documents_chain: Este módulo pega os documentos encontrados na busca e os "empacota" junto com a pergunta do usuário. Ele envia todo esse conteúdo de uma vez para o modelo de linguagem (LLM) gerar a resposta final com base nas suas informações.
     qa_chain = create_stuff_documents_chain(llm, qa_prompt)
 
     # Chain completa: combina recuperação + geração

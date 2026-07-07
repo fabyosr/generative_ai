@@ -3,286 +3,369 @@
 ui/observability.py — Painel de Observabilidade e Métricas
 =============================================================================
 Responsabilidade:
-    Renderizar o painel de observabilidade usando st.expander + st.tabs.
+    Renderizar o painel completo de observabilidade com st.tabs.
 
-    Organização em abas:
-        🧠 Contexto   — tokens acumulados, distribuição Human/AI, barra de uso
-        📡 RAG         — chunks recuperados, fontes, tokens de contexto, detalhes
-        🤖 Modelo      — provedor, modelo, temperatura, janela de contexto
-        ⏱ Desempenho  — latência da última resposta e histórico de latências
+    Abas:
+        🧠 Contexto    — tokens acumulados, distribuição Human/AI
+        📡 RAG         — chunks recuperados, fontes, tokens de contexto
+        🎯 Intenção    — tipo classificado, método, confiança, latência
+        🗃 Cache       — hit/miss, similaridade, tamanho, latência
+        🔀 Reranker    — scores do cross-encoder, docs antes/depois
+        🤖 Modelo      — provedor, modelo, temperatura
+        ⏱ Desempenho  — latência total e histórico da sessão
 
-    Recebe dicionários de métricas já calculados por core/metrics.py,
-    sem nenhuma lógica de cálculo própria.
+    Recebe dicionários/objetos de métricas já calculados — zero lógica
+    de negócio aqui.
 =============================================================================
 """
 
 import streamlit as st
 
-
-# ---------------------------------------------------------------------------
-# Constante: limite de tokens exibido na barra de contexto
-# ---------------------------------------------------------------------------
-
-# Estimativa conservadora usada como referência visual (barra de progresso).
-# Não representa o limite real do modelo, apenas serve como âncora visual.
 CONTEXT_REFERENCE_TOKENS = 4096
 
 
 def render_observability_panel(
     history_metrics: dict,
-    rag_metrics: dict,
-    llm_metadata: dict,
-    latency: float,
+    rag_metrics:     dict,
+    llm_metadata:    dict,
+    latency:         float,
+    intent_result=None,
+    cache_result=None,
+    rerank_result=None,
 ) -> None:
     """
-    Renderiza o painel completo de observabilidade em um st.expander.
+    Renderiza todas as abas de observabilidade.
 
     Args:
-        history_metrics: Saída de core.metrics.compute_history_metrics().
-        rag_metrics:     Saída de core.metrics.compute_rag_metrics().
-        llm_metadata:    Saída de core.metrics.extract_llm_metadata().
-        latency:         Tempo da última resposta em segundos (float).
+        history_metrics: core.metrics.compute_history_metrics()
+        rag_metrics:     core.metrics.compute_rag_metrics()
+        llm_metadata:    core.metrics.extract_llm_metadata()
+        latency:         Latência total da última resposta (s).
+        intent_result:   core.intent.IntentResult | None
+        cache_result:    core.cache.CacheResult | None
+        rerank_result:   core.reranker.RerankResult | None
     """
-    with st.expander("🔍 Observabilidade & Métricas", expanded=False):
+    (tab_ctx, tab_rag, tab_intent,
+     tab_cache, tab_rerank, tab_model, tab_perf) = st.tabs([
+        "🧠 Contexto",
+        "📡 RAG",
+        "🎯 Intenção",
+        "🗃 Cache",
+        "🔀 Reranker",
+        "🤖 Modelo",
+        "⏱ Desempenho",
+    ])
 
-        tab_context, tab_rag, tab_model, tab_perf = st.tabs([
-            "🧠 Contexto",
-            "📡 RAG",
-            "🤖 Modelo",
-            "⏱ Desempenho",
-        ])
-
-        # ---------------------------------------------------------------
-        # Aba 1 — Contexto: janela de tokens do histórico
-        # ---------------------------------------------------------------
-        with tab_context:
-            _render_context_tab(history_metrics)
-
-        # ---------------------------------------------------------------
-        # Aba 2 — RAG: métricas de recuperação
-        # ---------------------------------------------------------------
-        with tab_rag:
-            _render_rag_tab(rag_metrics)
-
-        # ---------------------------------------------------------------
-        # Aba 3 — Modelo: metadados do LLM
-        # ---------------------------------------------------------------
-        with tab_model:
-            _render_model_tab(llm_metadata)
-
-        # ---------------------------------------------------------------
-        # Aba 4 — Desempenho: latência
-        # ---------------------------------------------------------------
-        with tab_perf:
-            _render_performance_tab(latency)
+    with tab_ctx:    _render_context_tab(history_metrics)
+    with tab_rag:    _render_rag_tab(rag_metrics)
+    with tab_intent: _render_intent_tab(intent_result)
+    with tab_cache:  _render_cache_tab(cache_result)
+    with tab_rerank: _render_rerank_tab(rerank_result)
+    with tab_model:  _render_model_tab(llm_metadata)
+    with tab_perf:   _render_performance_tab(latency)
 
 
 # ---------------------------------------------------------------------------
-# Renderizadores internos por aba
+# Aba 1 — Contexto
 # ---------------------------------------------------------------------------
 
 def _render_context_tab(m: dict) -> None:
-    """
-    Aba 🧠 Contexto — exibe métricas da janela de contexto do histórico.
-
-    Mostra:
-        - Total de tokens acumulados (com barra de progresso relativa)
-        - Distribuição Human vs AI em colunas
-        - Contagem de mensagens por papel
-    """
+    """Tokens acumulados no histórico de conversa."""
     st.markdown("##### Janela de Contexto Atual")
 
-    total   = m["total_tokens"]
+    total   = m.get("total_tokens", 0)
     pct     = min(total / CONTEXT_REFERENCE_TOKENS, 1.0)
-    pct_str = f"{pct * 100:.1f}%"
 
-    # Barra de uso do contexto
     st.markdown(
         f"**Tokens acumulados:** `{total:,}` "
-        f"<span style='font-size:0.78rem; color:var(--text-secondary);'>"
-        f"(~{pct_str} de {CONTEXT_REFERENCE_TOKENS:,} ref.)</span>",
+        f"<span style='font-size:0.78rem;color:var(--text-secondary);'>"
+        f"(~{pct*100:.1f}% de {CONTEXT_REFERENCE_TOKENS:,} ref.)</span>",
         unsafe_allow_html=True,
     )
     st.progress(pct)
-
     st.markdown("")
 
-    # Distribuição Human / AI
-    col1, col2, col3 = st.columns(3)
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric("💬 Total Mensagens",   m.get("total_messages", 0))
+    with c2: st.metric("🧑 Humanas",           m.get("human_messages", 0),
+                       help=f"~{m.get('human_tokens',0):,} tokens")
+    with c3: st.metric("🤖 Respostas AI",      m.get("ai_messages", 0),
+                       help=f"~{m.get('ai_tokens',0):,} tokens")
 
-    with col1:
-        st.metric(
-            label="💬 Total de Mensagens",
-            value=m["total_messages"],
-        )
-    with col2:
-        st.metric(
-            label="🧑 Mensagens Humanas",
-            value=m["human_messages"],
-            help=f"~{m['human_tokens']:,} tokens",
-        )
-    with col3:
-        st.metric(
-            label="🤖 Respostas do AI",
-            value=m["ai_messages"],
-            help=f"~{m['ai_tokens']:,} tokens",
-        )
-
-    st.markdown("")
-
-    # Detalhamento de tokens por papel
-    if m["total_tokens"] > 0:
-        col_a, col_b = st.columns(2)
-        with col_a:
+    if total > 0:
+        st.markdown("")
+        ca, cb = st.columns(2)
+        human_pct = m.get("human_tokens", 0) / total * 100
+        with ca:
             st.markdown(
-                f"🧑 **Tokens humanos:** `{m['human_tokens']:,}`  \n"
-                f"🤖 **Tokens do AI:** `{m['ai_tokens']:,}`"
+                f"🧑 **Tokens humanos:** `{m.get('human_tokens',0):,}`  \n"
+                f"🤖 **Tokens AI:** `{m.get('ai_tokens',0):,}`"
             )
-        with col_b:
-            # Mini gráfico de pizza via proporção textual
-            human_pct = (m["human_tokens"] / total * 100) if total > 0 else 0
-            ai_pct    = 100 - human_pct
+        with cb:
             st.markdown(
                 f"📊 Human: **{human_pct:.1f}%**  \n"
-                f"📊 AI: **{ai_pct:.1f}%**"
+                f"📊 AI: **{100-human_pct:.1f}%**"
             )
 
 
-def _render_rag_tab(m: dict) -> None:
-    """
-    Aba 📡 RAG — exibe métricas de recuperação de documentos.
+# ---------------------------------------------------------------------------
+# Aba 2 — RAG
+# ---------------------------------------------------------------------------
 
-    Mostra:
-        - Chunks recuperados, fontes únicas, tokens de contexto
-        - Tamanho médio dos chunks
-        - Tabela detalhada com metadados de cada chunk
-    """
+def _render_rag_tab(m: dict) -> None:
+    """Métricas de recuperação de documentos da última query RAG."""
     st.markdown("##### Recuperação RAG — Última Query")
 
-    if m["chunks_retrieved"] == 0:
-        st.info("Nenhum chunk recuperado ainda. Envie uma mensagem para ver as métricas.", icon="ℹ️")
+    if not m or m.get("chunks_retrieved", 0) == 0:
+        st.info("Nenhum chunk recuperado. Pode ser chitchat ou cache hit.", icon="ℹ️")
         return
 
-    # Métricas principais
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("📦 Chunks Recuperados", m["chunks_retrieved"])
-    with col2:
-        st.metric("📁 Fontes Únicas", len(m["unique_sources"]))
-    with col3:
-        st.metric("🔤 Tokens de Contexto", f"{m['total_context_tokens']:,}")
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric("📦 Chunks Recuperados", m["chunks_retrieved"])
+    with c2: st.metric("📁 Fontes Únicas",      len(m["unique_sources"]))
+    with c3: st.metric("🔤 Tokens Contexto",    f"{m['total_context_tokens']:,}")
 
-    col4, col5 = st.columns(2)
-    with col4:
-        st.metric("📏 Média por Chunk", f"{m['avg_chunk_tokens']} tok")
-    with col5:
-        st.metric("❓ Tokens da Query", f"{m['query_tokens']:,}")
+    c4, c5 = st.columns(2)
+    with c4: st.metric("📏 Média por Chunk",    f"{m['avg_chunk_tokens']} tok")
+    with c5: st.metric("❓ Tokens da Query",    f"{m['query_tokens']:,}")
 
-    # Fontes únicas
     if m["unique_sources"]:
         st.markdown("**📂 Arquivos referenciados:**")
         for src in m["unique_sources"]:
             st.markdown(f"- `{src}`")
 
-    # Tabela detalhada dos chunks
-    st.markdown("**🔎 Detalhes dos chunks recuperados:**")
-    for chunk in m["chunks_detail"]:
+    st.markdown("**🔎 Detalhes dos chunks:**")
+    for chunk in m.get("chunks_detail", []):
         with st.expander(
-            f"Chunk {chunk['index'] + 1} — `{chunk['source']}` · p.{chunk['page']} · {chunk['tokens']} tokens",
+            f"Chunk {chunk['index']+1} — `{chunk['source']}` · "
+            f"p.{chunk['page']} · {chunk['tokens']} tok",
             expanded=False,
         ):
-            col_a, col_b = st.columns(2)
-            with col_a:
+            ca, cb = st.columns(2)
+            with ca:
                 st.markdown(f"**Arquivo:** `{chunk['source']}`")
                 st.markdown(f"**Página:** {chunk['page']}")
-            with col_b:
+            with cb:
                 st.markdown(f"**Tokens:** `{chunk['tokens']}`")
-                st.markdown(f"**Caracteres:** `{chunk['char_count']}`")
+                st.markdown(f"**Chars:** `{chunk['char_count']}`")
             st.caption(f"**Prévia:** {chunk['preview']}")
 
 
-def _render_model_tab(m: dict) -> None:
-    """
-    Aba 🤖 Modelo — exibe metadados e configuração do LLM ativo.
+# ---------------------------------------------------------------------------
+# Aba 3 — Intenção
+# ---------------------------------------------------------------------------
 
-    Mostra:
-        - Provedor e modelo selecionado
-        - Temperatura configurada
-        - Janela de contexto estimada do provedor
-    """
+def _render_intent_tab(result) -> None:
+    """Resultado do classificador de intenção (intent router)."""
+    st.markdown("##### Classificação de Intenção")
+
+    if result is None:
+        st.info("Aguardando a primeira mensagem.", icon="🎯")
+        return
+
+    # Badge de intenção
+    intent_styles = {
+        "chitchat":  ("🗣 CHITCHAT",  "#d1fae5", "#065f46"),
+        "rag_query": ("🔍 RAG QUERY", "#e0e7ff", "#3730a3"),
+        "followup":  ("🔄 FOLLOWUP",  "#fef3c7", "#92400e"),
+    }
+    label, bg, fg = intent_styles.get(
+        result.intent.value,
+        (result.intent.value.upper(), "#f3f4f6", "#374151")
+    )
+
+    st.markdown(
+        f"<div style='display:inline-block;padding:6px 16px;border-radius:999px;"
+        f"background:{bg};color:{fg};font-weight:700;font-size:0.9rem;"
+        f"margin-bottom:1rem;'>{label}</div>",
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("⚙️ Método",      result.method)
+    with c2:
+        st.metric("🎯 Confiança",   f"{result.confidence*100:.0f}%")
+    with c3:
+        st.metric("⏱ Latência",    f"{result.latency_ms:.1f} ms")
+
+    # Interpretação
+    interpretations = {
+        "chitchat":  "💬 Resposta direta via LLM — pipeline RAG **não executado**. Economia de tokens.",
+        "rag_query": "🔍 Pipeline RAG completo executado (cache → retriever → reranker → LLM).",
+        "followup":  "🔄 Reutilizou o contexto da query anterior — **sem nova busca vetorial**.",
+    }
+    interp = interpretations.get(result.intent.value, "")
+    if interp:
+        st.info(interp, icon="ℹ️")
+
+    # Debug: output bruto do LLM classificador
+    if result.raw_llm_output:
+        with st.expander("🔬 Output bruto do classificador LLM", expanded=False):
+            st.code(result.raw_llm_output)
+
+
+# ---------------------------------------------------------------------------
+# Aba 4 — Cache
+# ---------------------------------------------------------------------------
+
+def _render_cache_tab(result) -> None:
+    """Métricas do semantic cache — hit/miss, similaridade, tamanho."""
+    st.markdown("##### Semantic Cache")
+
+    if result is None:
+        st.info(
+            "Cache não consultado nesta query "
+            "(pode ser chitchat ou followup).",
+            icon="🗃"
+        )
+        return
+
+    # Badge hit/miss
+    if result.hit:
+        st.markdown(
+            "<div style='display:inline-block;padding:6px 16px;border-radius:999px;"
+            "background:#d1fae5;color:#065f46;font-weight:700;font-size:0.9rem;"
+            "margin-bottom:1rem;'>✅ CACHE HIT</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<div style='display:inline-block;padding:6px 16px;border-radius:999px;"
+            "background:#fee2e2;color:#991b1b;font-weight:700;font-size:0.9rem;"
+            "margin-bottom:1rem;'>❌ CACHE MISS</div>",
+            unsafe_allow_html=True,
+        )
+
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric("📊 Similaridade",  f"{result.similarity:.4f}")
+    with c2: st.metric("🗄 Entradas",      result.cache_size)
+    with c3: st.metric("⏱ Latência",      f"{result.latency_ms:.1f} ms")
+
+    if result.hit and result.matched_query:
+        st.markdown(f"**Query casada:** _{result.matched_query}_")
+        st.success(
+            f"Resposta retornada do cache com similaridade **{result.similarity:.1%}** "
+            f"— LLM e RAG não foram invocados.",
+            icon="⚡"
+        )
+
+    if not result.hit:
+        threshold = 0.92  # mesmo valor configurado no app.py
+        st.markdown(
+            f"Similaridade máxima encontrada: `{result.similarity:.4f}` "
+            f"(threshold: `{threshold}`) — abaixo do mínimo para hit."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Aba 5 — Reranker
+# ---------------------------------------------------------------------------
+
+def _render_rerank_tab(result) -> None:
+    """Scores do cross-encoder e comparação antes/depois do reranking."""
+    st.markdown("##### Reranker Cross-Encoder")
+
+    if result is None:
+        st.info(
+            "Reranker não executado nesta query "
+            "(pode ser chitchat, followup ou cache hit).",
+            icon="🔀"
+        )
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("📥 Docs Entrada",  result.docs_before)
+    with c2: st.metric("📤 Docs Saída",    result.docs_after)
+    with c3: st.metric("🏆 Top Score",     f"{result.top_score:.4f}")
+    with c4: st.metric("⏱ Latência",      f"{result.latency_ms:.1f} ms")
+
+    st.markdown(f"**Modelo:** `{result.model_name}`")
+    st.markdown(
+        f"**Dispersão de scores** (top − worst): `{result.score_delta:.4f}` "
+        f"— valores altos indicam boa separação de relevância."
+    )
+
+    if result.scores:
+        st.markdown("**📊 Scores por chunk (ordem de relevância):**")
+        for i, (doc, score) in enumerate(zip(result.docs, result.scores)):
+            import os
+            source = os.path.basename(doc.metadata.get("source", "?"))
+            page   = doc.metadata.get("page", "?")
+
+            # Barra de progresso normalizada pelo top score
+            bar_val = score / result.top_score if result.top_score > 0 else 0
+
+            col_rank, col_bar, col_meta = st.columns([0.5, 2, 2])
+            with col_rank:
+                st.markdown(f"**#{i+1}**")
+            with col_bar:
+                st.progress(max(0.0, min(bar_val, 1.0)))
+                st.caption(f"score: `{score:.4f}`")
+            with col_meta:
+                st.caption(f"`{source}` · p.{page}")
+
+
+# ---------------------------------------------------------------------------
+# Aba 6 — Modelo
+# ---------------------------------------------------------------------------
+
+def _render_model_tab(m: dict) -> None:
+    """Metadados e configuração do LLM ativo."""
     st.markdown("##### Configuração do Modelo")
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown(f"**Provedor:** {m['provider_icon']} {m['provider_label']}")
-        st.markdown(f"**Modelo:** `{m['model']}`")
-
-    with col2:
-        st.markdown(f"**Temperatura:** `{m['temperature']}`")
-        st.markdown(f"**Janela de contexto:** {m['context_window']}")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown(f"**Provedor:** {m.get('provider_icon','')} {m.get('provider_label','')}")
+        st.markdown(f"**Modelo:** `{m.get('model','')}`")
+    with c2:
+        st.markdown(f"**Temperatura:** `{m.get('temperature','')}`")
+        st.markdown(f"**Janela de contexto:** {m.get('context_window','')}")
 
     st.divider()
 
-    # Interpretação visual da temperatura
-    temp = m["temperature"]
-    if temp <= 0.2:
-        temp_desc = "🧊 Muito determinístico — respostas consistentes e previsíveis."
-    elif temp <= 0.5:
-        temp_desc = "⚖️ Balanceado — boa combinação de precisão e naturalidade."
-    elif temp <= 0.8:
-        temp_desc = "🌤 Criativo — respostas variadas com alguma imprevisibilidade."
-    else:
-        temp_desc = "🔥 Alta criatividade — respostas diversas, pode afetar precisão."
+    temp = m.get("temperature", 0.1)
+    if temp <= 0.2:   desc = "🧊 Muito determinístico — respostas consistentes e previsíveis."
+    elif temp <= 0.5: desc = "⚖️ Balanceado — precisão e naturalidade."
+    elif temp <= 0.8: desc = "🌤 Criativo — respostas variadas."
+    else:             desc = "🔥 Alta criatividade — pode afetar precisão."
+    st.info(desc, icon="🌡️")
 
-    st.info(temp_desc, icon="🌡️")
 
+# ---------------------------------------------------------------------------
+# Aba 7 — Desempenho
+# ---------------------------------------------------------------------------
 
 def _render_performance_tab(latency: float) -> None:
-    """
-    Aba ⏱ Desempenho — exibe latência da última resposta.
-
-    Mostra:
-        - Tempo de resposta da última query
-        - Classificação qualitativa da latência
-        - Histórico das últimas latências (session_state)
-    """
+    """Latência total da última resposta e histórico da sessão."""
     st.markdown("##### Desempenho da Última Resposta")
 
     if latency <= 0:
-        st.info("Aguardando a primeira resposta para medir latência.", icon="⏳")
+        st.info("Aguardando a primeira resposta.", icon="⏳")
         return
 
-    # Classificação qualitativa
-    if latency < 2:
-        quality = ("🟢 Excelente", "Resposta ultra-rápida.")
-    elif latency < 5:
-        quality = ("🟡 Boa", "Latência dentro do esperado.")
-    elif latency < 15:
-        quality = ("🟠 Moderada", "Pode haver sobrecarga no servidor.")
-    else:
-        quality = ("🔴 Lenta", "Verifique sua conexão ou troque de provedor.")
+    if latency < 2:    quality = ("🟢 Excelente", "Resposta ultra-rápida.")
+    elif latency < 5:  quality = ("🟡 Boa",       "Latência dentro do esperado.")
+    elif latency < 15: quality = ("🟠 Moderada",  "Pode haver sobrecarga.")
+    else:              quality = ("🔴 Lenta",     "Verifique conexão ou provedor.")
 
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        st.metric("⏱ Tempo de resposta", f"{latency}s")
-    with col2:
-        st.markdown(f"**Avaliação:** {quality[0]}  \n{quality[1]}")
+    c1, c2 = st.columns([1, 2])
+    with c1: st.metric("⏱ Tempo total", f"{latency}s")
+    with c2: st.markdown(f"**Avaliação:** {quality[0]}  \n{quality[1]}")
 
-    # Histórico de latências da sessão
-    if "latency_history" in st.session_state and st.session_state.latency_history:
-        st.markdown("**📈 Histórico de latências (sessão atual):**")
-        history = st.session_state.latency_history
-
-        # Formata como mini tabela
-        cols = st.columns(min(len(history), 6))
-        for i, lat in enumerate(history[-6:]):  # últimas 6
+    history = st.session_state.get("latency_history", [])
+    if history:
+        st.markdown("**📈 Histórico de latências (sessão):**")
+        last6 = history[-6:]
+        cols  = st.columns(len(last6))
+        for i, lat in enumerate(last6):
             with cols[i]:
-                st.metric(f"Q{len(history) - len(history[-6:]) + i + 1}", f"{lat}s")
+                idx = len(history) - len(last6) + i + 1
+                st.metric(f"Q{idx}", f"{lat}s")
 
         avg = sum(history) / len(history)
         st.markdown(
-            f"Média da sessão: **`{avg:.2f}s`** · "
+            f"Média: **`{avg:.2f}s`** · "
             f"Mín: **`{min(history)}s`** · "
             f"Máx: **`{max(history)}s`**"
         )
