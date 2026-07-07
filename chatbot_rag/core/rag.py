@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import streamlit as st
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
@@ -200,7 +201,11 @@ def build_rag_chain(llm, retriever):
     """
     context_prompt, qa_prompt = _build_prompts()
 
+    st.markdown(f'context_prompt: {context_prompt}')
+    st.markdown(f'qa_prompt: {qa_prompt}')
+
     # Chain 1: recupera documentos consciente do histórico
+    # create_history_aware_retriever: Este módulo ajusta as perguntas do usuário para o contexto da conversa. Se você perguntou "Onde fica?" e depois "Qual é o telefone?", o módulo usa o histórico para reescrever a segunda pergunta como "Qual é o telefone do 'Onde fica'?" antes de buscar nos seus arquivos.
     history_aware_retriever = create_history_aware_retriever(
         llm=llm,
         retriever=retriever,
@@ -208,6 +213,7 @@ def build_rag_chain(llm, retriever):
     )
 
     # Chain 2: gera resposta usando os documentos recuperados
+    # create_stuff_documents_chain: Este módulo pega os documentos encontrados na busca e os "empacota" junto com a pergunta do usuário. Ele envia todo esse conteúdo de uma vez para o modelo de linguagem (LLM) gerar a resposta final com base nas suas informações.
     qa_chain = create_stuff_documents_chain(llm, qa_prompt)
 
     # Chain completa: combina recuperação + geração
