@@ -195,6 +195,7 @@ def _process_query(query: str, config: dict) -> None:
 
     latency = timer.stop()
 
+    st.markdown(f'st.session_state.retriever: {st.session_state.retriever}')
     st.markdown(f'resultado rag: {result}')
 
     # --- Extrai resposta e contexto ---
