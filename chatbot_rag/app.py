@@ -195,6 +195,8 @@ def _process_query(query: str, config: dict) -> None:
 
     latency = timer.stop()
 
+    st.markdown(f'resultado rag: {result}')
+
     # --- Extrai resposta e contexto ---
     answer       = result["answer"]
     context_docs = result.get("context", [])
