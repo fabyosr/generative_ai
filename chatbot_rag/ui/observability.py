@@ -369,3 +369,219 @@ def _render_performance_tab(latency: float) -> None:
             f"Mín: **`{min(history)}s`** · "
             f"Máx: **`{max(history)}s`**"
         )
+
+
+# ===========================================================================
+# Atualização da assinatura pública — adiciona analytics e clustering
+# ===========================================================================
+
+_original_render = render_observability_panel
+
+def render_observability_panel(
+    history_metrics:  dict,
+    rag_metrics:      dict,
+    llm_metadata:     dict,
+    latency:          float,
+    intent_result=None,
+    cache_result=None,
+    rerank_result=None,
+    analytics_result=None,
+    clustering=None,
+) -> None:
+    """
+    Versão estendida do painel — inclui abas Analytics e Clusters.
+
+    Novas abas adicionadas:
+        📊 Analytics  — grounding score, faithfulness, análise textual, custo
+        🗺 Clusters   — clusterização de intenções, outliers, gaps no corpus
+    """
+    (tab_ctx, tab_rag, tab_intent, tab_cache,
+     tab_rerank, tab_model, tab_perf,
+     tab_analytics, tab_clusters) = st.tabs([
+        "🧠 Contexto",
+        "📡 RAG",
+        "🎯 Intenção",
+        "🗃 Cache",
+        "🔀 Reranker",
+        "🤖 Modelo",
+        "⏱ Desempenho",
+        "📊 Analytics",
+        "🗺 Clusters",
+    ])
+
+    with tab_ctx:       _render_context_tab(history_metrics)
+    with tab_rag:       _render_rag_tab(rag_metrics)
+    with tab_intent:    _render_intent_tab(intent_result)
+    with tab_cache:     _render_cache_tab(cache_result)
+    with tab_rerank:    _render_rerank_tab(rerank_result)
+    with tab_model:     _render_model_tab(llm_metadata)
+    with tab_perf:      _render_performance_tab(latency)
+    with tab_analytics: _render_analytics_tab(analytics_result)
+    with tab_clusters:  _render_clusters_tab(clustering)
+
+
+# ---------------------------------------------------------------------------
+# Aba 8 — Analytics
+# ---------------------------------------------------------------------------
+
+def _render_analytics_tab(a) -> None:
+    """
+    Aba 📊 Analytics — grounding, faithfulness, análise textual e custo.
+    """
+    st.markdown("##### Analytics de Qualidade")
+
+    if a is None:
+        st.info("Analytics disponíveis após a primeira query RAG.", icon="📊")
+        return
+
+    # --- Grounding ---
+    st.markdown("**🎯 Grounding & Confiança**")
+
+    grounding_color = {"Alta 🟢": "#d1fae5", "Moderada 🟡": "#fef3c7",
+                       "Baixa 🔴": "#fee2e2", "Sem contexto RAG": "#f3f4f6"}
+    bg = grounding_color.get(a.grounding_label, "#f3f4f6")
+    st.markdown(
+        f"<div style='background:{bg};padding:10px 16px;border-radius:8px;"
+        f"margin-bottom:12px;font-weight:600;'>"
+        f"Grounding: {a.grounding_label} &nbsp;|&nbsp; "
+        f"Score: <code>{a.grounding_score:.4f}</code> &nbsp;|&nbsp; "
+        f"Sobreposição semântica: <code>{a.semantic_overlap:.4f}</code>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric("🎯 Grounding Score",      f"{a.grounding_score:.3f}")
+    with c2: st.metric("🧬 Overlap Semântico",    f"{a.semantic_overlap:.3f}")
+    with c3: st.metric("⚠️ Risco Alucinação",     f"{a.hallucination_risk*100:.1f}%")
+
+    # Sentenças não ancoradas
+    if a.ungrounded_sentences:
+        with st.expander(
+            f"⚠️ {len(a.ungrounded_sentences)} sentença(s) não ancorada(s) no contexto RAG",
+            expanded=False,
+        ):
+            st.caption("Estas sentenças têm baixa similaridade com os chunks recuperados "
+                       "e podem representar extrapolação do modelo:")
+            for i, sent in enumerate(a.ungrounded_sentences):
+                st.markdown(f"**{i+1}.** _{sent}_")
+
+    st.divider()
+
+    # --- Análise textual ---
+    st.markdown("**📝 Análise da Resposta**")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("📏 Palavras",          a.response_words)
+    with c2: st.metric("🔢 Sentenças",         a.response_sentences)
+    with c3: st.metric("📚 Diversidade Léxica", f"{a.lexical_diversity:.3f}")
+    with c4: st.metric("📐 Média Sent.",        f"{a.avg_sentence_length:.1f} pal.")
+
+    c5, c6 = st.columns(2)
+    with c5: st.metric("🤔 Hedging Rate",      f"{a.hedging_rate:.3f}")
+    with c6: st.metric("🏷 Tipo Resposta",     a.response_type)
+
+    if a.hedging_terms_found:
+        st.markdown(
+            "**Termos de incerteza encontrados:** " +
+            " · ".join(f"`{t}`" for t in a.hedging_terms_found)
+        )
+
+    st.divider()
+
+    # --- Análise da query ---
+    st.markdown("**❓ Análise da Query**")
+    c1, c2, c3 = st.columns(3)
+    with c1: st.metric("🏷 Tipo",         a.query_type)
+    with c2: st.metric("📊 Complexidade", a.query_complexity)
+    with c3: st.metric("📏 Palavras",     a.query_words)
+
+    flags = []
+    if a.has_negation:  flags.append("🚫 Contém negação")
+    if a.has_ambiguity: flags.append("❓ Contém ambiguidade (pronomes)")
+    if flags:
+        st.info(" · ".join(flags))
+
+    st.divider()
+
+    # --- Custo ---
+    st.markdown("**💰 Estimativa de Custo**")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("📥 Tokens Input",  f"{a.input_tokens:,}")
+    with c2: st.metric("📤 Tokens Output", f"{a.output_tokens:,}")
+    with c3: st.metric("💵 Custo Est.",    f"${a.estimated_cost_usd:.6f}")
+    with c4: st.metric("⚡ Economia Cache", f"${a.cache_savings_usd:.6f}")
+
+    # Acumulado da sessão
+    if "last_analytics" in st.session_state:
+        total_cost = sum(
+            getattr(st.session_state, f"analytics_cost_{i}", 0.0)
+            for i in range(100)
+        )
+
+
+# ---------------------------------------------------------------------------
+# Aba 9 — Clusters
+# ---------------------------------------------------------------------------
+
+def _render_clusters_tab(c) -> None:
+    """
+    Aba 🗺 Clusters — visualização da clusterização automática de intenções.
+    """
+    st.markdown("##### Clusterização Automática de Intenções")
+
+    if c is None:
+        st.info(
+            "O clustering ativa automaticamente após 5 queries RAG na sessão.",
+            icon="🗺"
+        )
+        return
+
+    if c.error:
+        st.warning(c.error, icon="⚠️")
+        return
+
+    # Resumo geral
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("🗂 Clusters",       c.n_clusters)
+    with c2: st.metric("📊 Queries Total",  c.total_queries)
+    with c3: st.metric("✅ Cobertura",      f"{c.coverage*100:.0f}%")
+    with c4: st.metric("⏱ Latência",       f"{c.latency_ms:.0f}ms")
+
+    st.markdown("")
+
+    # Clusters descobertos
+    if c.clusters:
+        st.markdown("**📂 Clusters descobertos:**")
+        for cluster in c.clusters:
+            coherence_icon = "🟢" if cluster.coherence > 0.7 else "🟡" if cluster.coherence > 0.4 else "🔴"
+            with st.expander(
+                f"**{cluster.label}** · {cluster.size} queries · "
+                f"Coesão: {coherence_icon} {cluster.coherence:.3f}",
+                expanded=cluster.size >= 3,
+            ):
+                st.markdown(
+                    "**Termos principais:** " +
+                    " · ".join(f"`{t}`" for t in cluster.top_terms)
+                )
+                st.markdown("**Queries:**")
+                for q in cluster.queries:
+                    st.markdown(f"- _{q}_")
+
+    # Outliers — gaps no corpus
+    if c.outliers:
+        st.divider()
+        st.markdown(
+            f"**🔍 {len(c.outliers)} query(ies) sem cluster "
+            f"— possíveis gaps no corpus:**"
+        )
+        st.caption(
+            "Queries que não pertencem a nenhum grupo podem indicar tópicos "
+            "não cobertos pelos documentos indexados."
+        )
+        for q in c.outliers:
+            st.markdown(
+                f"<div style='background:#fef9c3;padding:6px 12px;"
+                f"border-radius:6px;margin:4px 0;border-left:3px solid #eab308;"
+                f"font-size:0.84rem;'>⚠️ {q}</div>",
+                unsafe_allow_html=True,
+            )
