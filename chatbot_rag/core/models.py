@@ -21,6 +21,8 @@ from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
 
+from core.secrets import get_api_key
+
 
 # ---------------------------------------------------------------------------
 # Constantes — catálogo de modelos disponíveis por provedor
@@ -28,9 +30,14 @@ from langchain_groq import ChatGroq
 
 AVAILABLE_MODELS = {
     "hf_hub": [
-        "microsoft/Phi-3-mini-4k-instruct",
-        "meta-llama/Meta-Llama-3-8B-Instruct",
-        "mistralai/Mistral-7B-Instruct-v0.2",
+        # Modelos validados com HuggingFace Inference Providers (provider="auto")
+        # O parâmetro provider="auto" seleciona automaticamente o melhor
+        # provider disponível para cada modelo (Together, Nebius, Novita, etc.)
+        "deepseek-ai/DeepSeek-R1-0528",
+        "meta-llama/Llama-3.1-8B-Instruct",   # era Meta-Llama-3-8B (descontinuado)
+        "mistralai/Mistral-7B-Instruct-v0.3",  # era v0.2 (descontinuado)
+        "Qwen/Qwen2.5-72B-Instruct",
+        "microsoft/Phi-4",                      # era Phi-3-mini (descontinuado)
     ],
     "openai": [
         "gpt-4o-mini",
@@ -59,10 +66,20 @@ PROVIDER_LABELS = {
 
 def _model_hf_hub(model: str, temperature: float) -> ChatHuggingFace:
     """
-    Instancia um modelo do HuggingFace Hub.
+    Instancia um modelo do HuggingFace Hub via Inference Providers.
 
-    Envolve HuggingFaceEndpoint em ChatHuggingFace para padronizar
-    a interface de chat (mensagens estruturadas) com os demais provedores.
+    O parâmetro `provider="auto"` é obrigatório desde a migração do HF
+    para o sistema de Inference Providers (2025). Sem ele, a API retorna
+    'model_not_supported' mesmo para modelos válidos, porque o endpoint
+    legado (Serverless Inference API) foi descontinuado para a maioria
+    dos modelos.
+
+    Com `provider="auto"`, o HF seleciona automaticamente o melhor
+    provider disponível para o modelo (Together AI, Nebius, Novita, etc.),
+    conforme a configuração em hf.co/settings/inference-providers.
+
+    O token é passado como `huggingfacehub_api_token` (nome correto do
+    parâmetro na versão atual de langchain-huggingface).
 
     Args:
         model:       ID do repositório no HuggingFace Hub.
@@ -77,6 +94,8 @@ def _model_hf_hub(model: str, temperature: float) -> ChatHuggingFace:
         return_full_text=False,
         max_new_tokens=1024,
         task="text-generation",
+        provider="auto",                          # ← obrigatório no HF atual
+        huggingfacehub_api_token=get_api_key("HUGGINGFACEHUB_API_TOKEN"),
     )
     return ChatHuggingFace(llm=endpoint)
 
@@ -85,8 +104,9 @@ def _model_openai(model: str, temperature: float) -> ChatOpenAI:
     """
     Instancia um modelo da OpenAI.
 
-    A chave de API é lida automaticamente via st.secrets["OPENAI_API_KEY"]
-    ou variável de ambiente OPENAI_API_KEY.
+    A chave OPENAI_API_KEY é passada explicitamente via get_api_key()
+    para garantir que o valor correto do st.secrets seja usado,
+    independente do estado de os.environ no ciclo atual do Streamlit.
 
     Args:
         model:       Nome do modelo (ex: "gpt-4o-mini").
@@ -98,12 +118,19 @@ def _model_openai(model: str, temperature: float) -> ChatOpenAI:
     return ChatOpenAI(
         model=model,
         temperature=temperature,
+        api_key=get_api_key("OPENAI_API_KEY"),
     )
 
 
 def _model_groq(model: str, temperature: float) -> ChatGroq:
     """
     Instancia um modelo hospedado na Groq (inferência ultra-rápida).
+
+    A chave GROQ_API_KEY é passada explicitamente via get_api_key(),
+    lendo diretamente do st.secrets a cada instanciação. Isso resolve
+    o AuthenticationError 401 causado por race conditions entre ciclos
+    de re-execução do Streamlit, onde os.environ pode ainda não ter
+    recebido a chave quando o ChatGroq é instanciado.
 
     Args:
         model:       ID do modelo Groq (ex: "llama3-70b-8192").
@@ -116,6 +143,7 @@ def _model_groq(model: str, temperature: float) -> ChatGroq:
         model=model,
         temperature=temperature,
         max_retries=2,
+        groq_api_key=get_api_key("GROQ_API_KEY"),
     )
 
 

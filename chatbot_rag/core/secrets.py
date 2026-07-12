@@ -24,10 +24,10 @@ import os
 import streamlit as st
 
 
-# Mapeamento: chave no secrets.toml → variável de ambiente esperada pelo SDK
+# Mapeamento: nome lógico → chave no secrets.toml
 _SECRETS_MAP = {
-    "OPENAI_API_KEY":          "OPENAI_API_KEY",
-    "GROQ_API_KEY":            "GROQ_API_KEY",
+    "OPENAI_API_KEY":           "OPENAI_API_KEY",
+    "GROQ_API_KEY":             "GROQ_API_KEY",
     "HUGGINGFACEHUB_API_TOKEN": "HUGGINGFACEHUB_API_TOKEN",
 }
 
@@ -36,26 +36,49 @@ def load_api_keys() -> dict[str, bool]:
     """
     Lê st.secrets e injeta as chaves de API em os.environ.
 
-    Para cada chave mapeada em _SECRETS_MAP:
-        - Se presente no st.secrets → injeta em os.environ
-        - Se ausente → ignora silenciosamente (sem exceção)
+    Por que injetar em os.environ E retornar os valores:
+        - os.environ garante compatibilidade com SDKs que leem env vars
+          diretamente (ex: huggingface_hub).
+        - O dict de valores retornado por get_api_key() permite passar
+          a chave explicitamente para ChatGroq/ChatOpenAI, evitando
+          race conditions entre ciclos de re-execução do Streamlit.
 
     Returns:
         dict[str, bool]: Status de carregamento de cada chave.
-            Ex: {"OPENAI_API_KEY": True, "GROQ_API_KEY": False, ...}
     """
     status = {}
 
     for secret_key, env_var in _SECRETS_MAP.items():
         try:
             value = st.secrets[secret_key]
+            # Injeta no ambiente (para SDKs que leem os.environ)
             os.environ[env_var] = value
             status[secret_key] = True
         except (KeyError, FileNotFoundError):
-            # Chave não configurada — provedor correspondente indisponível
             status[secret_key] = False
 
     return status
+
+
+def get_api_key(key_name: str) -> str | None:
+    """
+    Retorna o valor de uma chave de API lendo diretamente do st.secrets.
+
+    Preferível a os.environ para passar explicitamente aos construtores
+    dos SDKs (ChatGroq, ChatOpenAI), eliminando dependência de timing
+    da injeção no ambiente.
+
+    Args:
+        key_name: Nome da chave (ex: "GROQ_API_KEY").
+
+    Returns:
+        str | None: Valor da chave, ou None se não configurada.
+    """
+    try:
+        return st.secrets[key_name]
+    except (KeyError, FileNotFoundError):
+        # Fallback para os.environ (ex: variáveis definidas no sistema)
+        return os.environ.get(key_name)
 
 
 def get_available_providers(status: dict[str, bool]) -> list[str]:
