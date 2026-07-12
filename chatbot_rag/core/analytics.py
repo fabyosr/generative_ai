@@ -44,28 +44,11 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
-# Preços por 1K tokens (USD) — atualize conforme tabela do provedor
+# Preços por token: delegados ao MODEL_CATALOG em core/models.py
 # ---------------------------------------------------------------------------
-
-TOKEN_PRICES = {
-    # (input_price, output_price) por 1K tokens em USD
-    "openai": {
-        "gpt-4o-mini":    (0.000150, 0.000600),
-        "gpt-4o":         (0.002500, 0.010000),
-        "gpt-3.5-turbo":  (0.000500, 0.001500),
-    },
-    "groq": {
-        # Groq é gratuito até o rate limit — estimativa simbólica
-        "llama3-70b-8192":    (0.000059, 0.000079),
-        "llama3-8b-8192":     (0.000005, 0.000008),
-        "mixtral-8x7b-32768": (0.000024, 0.000024),
-        "gemma2-9b-it":       (0.000020, 0.000020),
-    },
-    "hf_hub": {
-        # HuggingFace Inference API — estimativa conservadora
-        "default": (0.000100, 0.000100),
-    },
-}
+# Não mantemos uma cópia local de preços aqui — a fonte única de verdade
+# é MODEL_CATALOG / get_model_info() em core/models.py.
+# A função _estimate_cost() abaixo consulta esse catálogo via get_model_info.
 
 # Termos de incerteza/hedging em português e inglês
 _HEDGING_TERMS = re.compile(
@@ -233,7 +216,12 @@ def _estimate_cost(
     model:         str,
 ) -> float:
     """
-    Estima o custo em USD da interação com base nos preços configurados.
+    Estima o custo em USD da interação consultando o MODEL_CATALOG.
+
+    Delega a consulta de preços para get_model_info() em core/models.py,
+    que é a fonte única de verdade para preços e janelas de contexto.
+    Isso garante que qualquer atualização de preço feita em models.py
+    reflete automaticamente aqui sem necessidade de editar dois arquivos.
 
     Args:
         input_tokens:  Tokens do prompt (query + contexto + histórico).
@@ -242,20 +230,14 @@ def _estimate_cost(
         model:         Nome do modelo.
 
     Returns:
-        float: Custo estimado em USD.
+        float: Custo estimado em USD (0.0 se preço não disponível).
     """
-    prices = TOKEN_PRICES.get(provider, {})
-    if not prices:
-        return 0.0
+    from core.models import get_model_info
 
-    # Tenta encontrar o modelo exato; fallback para "default"
-    price_pair = prices.get(model) or prices.get("default")
-    if not price_pair:
-        # Pega o primeiro par disponível
-        price_pair = next(iter(prices.values()))
+    model_info = get_model_info(provider, model)
+    price_input, price_output = model_info["price"]
 
-    input_price, output_price = price_pair
-    cost = (input_tokens / 1000 * input_price) + (output_tokens / 1000 * output_price)
+    cost = (input_tokens / 1_000 * price_input) + (output_tokens / 1_000 * price_output)
     return round(cost, 8)
 
 

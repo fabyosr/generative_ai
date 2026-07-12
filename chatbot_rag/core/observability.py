@@ -21,9 +21,7 @@ Responsabilidade:
 
 import streamlit as st
 
-# CONTEXT_REFERENCE_TOKENS foi removido — a janela de contexto agora
-# vem dinamicamente de llm_metadata["context_window"] (int),
-# populado por extract_llm_metadata() via MODEL_CATALOG em core/models.py.
+CONTEXT_REFERENCE_TOKENS = 4096
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +74,7 @@ def render_observability_panel(
         "⏱ Desempenho",
     ])
 
-    with tab_ctx:    _render_context_tab(history_metrics, llm_metadata)
+    with tab_ctx:    _render_context_tab(history_metrics)
     with tab_rag:    _render_rag_tab(rag_metrics)
     with tab_intent: _render_intent_tab(intent_result)
     with tab_cache:  _render_cache_tab(cache_result)
@@ -89,66 +87,40 @@ def render_observability_panel(
 # Aba 1 — Contexto
 # ---------------------------------------------------------------------------
 
-def _render_context_tab(m: dict, llm_metadata: dict | None = None) -> None:
-    """
-    Tokens acumulados no histórico — barra de uso relativa à janela real do modelo.
-
-    A janela de contexto exibida na barra de progresso é obtida
-    dinamicamente de llm_metadata["context_window"], que vem do
-    MODEL_CATALOG em core/models.py. Cada modelo tem seu valor exato.
-    """
-    # Janela de contexto real do modelo selecionado (int)
-    ctx_window = (llm_metadata or {}).get("context_window", 4_096)
-    ctx_label  = (llm_metadata or {}).get("context_window_label", f"{ctx_window:,} tokens")
-    tier       = (llm_metadata or {}).get("tier", "")
-
+def _render_context_tab(m: dict) -> None:
+    """Tokens acumulados no histórico de conversa."""
     _tab_header(
         "Mostra o volume de tokens acumulados no histórico da sessão, "
         "distribuídos entre mensagens humanas e respostas do AI. "
-        "A barra de progresso reflete o limite real do modelo selecionado.",
+        "Útil para entender o consumo da janela de contexto do modelo.",
         {
-            "Tokens acumulados":    "Total de tokens em todo o histórico de mensagens da sessão atual.",
-            "Janela de contexto":   "Limite máximo de tokens do modelo selecionado (vem do MODEL_CATALOG).",
-            "Barra de uso":         "Proporção dos tokens acumulados em relação à janela real do modelo.",
-            "Human tokens":         "Tokens gerados pelas mensagens do usuário.",
-            "AI tokens":            "Tokens gerados pelas respostas do assistente.",
-            "free+paid":            "Modelo com tier gratuito (rate limited) e pago (por token).",
+            "Tokens acumulados":   "Total de tokens em todo o histórico de mensagens da sessão atual.",
+            "Janela de contexto":  "Limite máximo de tokens que o modelo pode processar em uma única chamada.",
+            "Referência (4096)":   "Valor de referência visual — não representa o limite real do modelo selecionado.",
+            "Human tokens":        "Tokens gerados pelas mensagens do usuário.",
+            "AI tokens":           "Tokens gerados pelas respostas do assistente.",
+            "TTR (diversidade)":   "Type-Token Ratio — proporção de palavras únicas vs total. Alto = vocabulário variado.",
         }
     )
     st.markdown("##### Janela de Contexto Atual")
 
-    total = m.get("total_tokens", 0)
-    pct   = min(total / ctx_window, 1.0) if ctx_window > 0 else 0.0
-
-    # Badge de tier ao lado da janela
-    tier_badge = ""
-    if tier == "free+paid":
-        tier_badge = " · <span style='background:#d1fae5;color:#065f46;padding:1px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;'>FREE tier disponível</span>"
-    elif tier == "paid":
-        tier_badge = " · <span style='background:#e0e7ff;color:#3730a3;padding:1px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;'>PAID</span>"
+    total   = m.get("total_tokens", 0)
+    pct     = min(total / CONTEXT_REFERENCE_TOKENS, 1.0)
 
     st.markdown(
         f"**Tokens acumulados:** `{total:,}` "
         f"<span style='font-size:0.78rem;color:var(--text-secondary);'>"
-        f"({pct*100:.1f}% de {ctx_label})</span>"
-        f"{tier_badge}",
+        f"(~{pct*100:.1f}% de {CONTEXT_REFERENCE_TOKENS:,} ref.)</span>",
         unsafe_allow_html=True,
     )
-
-    # Cor da barra muda conforme o uso
-    if pct >= 0.90:
-        st.error(f"⚠️ Contexto quase cheio! ({pct*100:.1f}% usado)", icon="🔴")
-    elif pct >= 0.70:
-        st.warning(f"Contexto em {pct*100:.1f}% — considere iniciar nova sessão.", icon="🟡")
-
     st.progress(pct)
     st.markdown("")
 
     c1, c2, c3 = st.columns(3)
-    with c1: st.metric("💬 Total Mensagens",  m.get("total_messages", 0))
-    with c2: st.metric("🧑 Humanas",          m.get("human_messages", 0),
+    with c1: st.metric("💬 Total Mensagens",   m.get("total_messages", 0))
+    with c2: st.metric("🧑 Humanas",           m.get("human_messages", 0),
                        help=f"~{m.get('human_tokens',0):,} tokens")
-    with c3: st.metric("🤖 Respostas AI",     m.get("ai_messages", 0),
+    with c3: st.metric("🤖 Respostas AI",      m.get("ai_messages", 0),
                        help=f"~{m.get('ai_tokens',0):,} tokens")
 
     if total > 0:
@@ -442,13 +414,9 @@ def _render_model_tab(m: dict) -> None:
     with c1:
         st.markdown(f"**Provedor:** {m.get('provider_icon','')} {m.get('provider_label','')}")
         st.markdown(f"**Modelo:** `{m.get('model','')}`")
-        st.markdown(f"**Tier:** `{m.get('tier','')}`")
     with c2:
         st.markdown(f"**Temperatura:** `{m.get('temperature','')}`")
-        st.markdown(f"**Janela de contexto:** `{m.get('context_window_label', m.get('context_window',''))}`")
-        p_in  = m.get('price_input',  0) * 1000   # /1K → /1M
-        p_out = m.get('price_output', 0) * 1000
-        st.markdown(f"**Preço:** `${p_in:.4f}` in · `${p_out:.4f}` out / 1M tokens")
+        st.markdown(f"**Janela de contexto:** {m.get('context_window','')}")
 
     st.divider()
 
@@ -549,7 +517,7 @@ def render_observability_panel(
         "🗺 Clusters",
     ])
 
-    with tab_ctx:       _render_context_tab(history_metrics, llm_metadata)
+    with tab_ctx:       _render_context_tab(history_metrics)
     with tab_rag:       _render_rag_tab(rag_metrics)
     with tab_intent:    _render_intent_tab(intent_result)
     with tab_cache:     _render_cache_tab(cache_result)

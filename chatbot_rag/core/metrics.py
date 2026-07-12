@@ -223,7 +223,11 @@ def compute_rag_metrics(context_docs: list, query: str, provider: str) -> dict:
 
 def extract_llm_metadata(provider: str, model: str, temperature: float) -> dict:
     """
-    Consolida metadados estáticos e de configuração do modelo em uso.
+    Consolida metadados do modelo em uso, incluindo janela de contexto real.
+
+    A janela de contexto é obtida dinamicamente do MODEL_CATALOG em
+    core/models.py — cada modelo tem seu valor exato em vez de um
+    placeholder genérico por provedor.
 
     Args:
         provider:    Provedor LLM selecionado.
@@ -231,23 +235,40 @@ def extract_llm_metadata(provider: str, model: str, temperature: float) -> dict:
         temperature: Temperatura configurada.
 
     Returns:
-        dict: Metadados descritivos do modelo para exibição na UI.
+        dict com: provider, provider_label, provider_icon, model,
+                  temperature, context_window (int), context_window_label (str),
+                  price_input, price_output, tier.
     """
-    provider_info = {
-        "hf_hub": {"label": "HuggingFace Hub", "icon": "🤗", "context_window": "Variável"},
-        "openai": {"label": "OpenAI",           "icon": "🟢", "context_window": "128k (gpt-4o)"},
-        "groq":   {"label": "Groq",             "icon": "⚡", "context_window": "8k–32k"},
-    }
+    from core.models import get_model_info
 
-    info = provider_info.get(provider, {"label": provider, "icon": "🤖", "context_window": "Desconhecida"})
+    provider_info = {
+        "hf_hub": {"label": "HuggingFace Hub", "icon": "🤗"},
+        "openai": {"label": "OpenAI",           "icon": "🟢"},
+        "groq":   {"label": "Groq",             "icon": "⚡"},
+    }
+    info       = provider_info.get(provider, {"label": provider, "icon": "🤖"})
+    model_info = get_model_info(provider, model)
+
+    ctx = model_info["context_window"]
+    # Label legível: 4096 → "4k", 131072 → "131k", 163840 → "160k"
+    if ctx >= 1_000:
+        ctx_label = f"{ctx // 1_000}k tokens"
+    else:
+        ctx_label = f"{ctx} tokens"
+
+    price_input, price_output = model_info["price"]
 
     return {
-        "provider":       provider,
-        "provider_label": info["label"],
-        "provider_icon":  info["icon"],
-        "model":          model,
-        "temperature":    temperature,
-        "context_window": info["context_window"],
+        "provider":          provider,
+        "provider_label":    info["label"],
+        "provider_icon":     info["icon"],
+        "model":             model,
+        "temperature":       temperature,
+        "context_window":    ctx,           # int — usado para cálculo de %
+        "context_window_label": ctx_label,  # str — exibição amigável
+        "price_input":       price_input,   # USD por 1K tokens input
+        "price_output":      price_output,  # USD por 1K tokens output
+        "tier":              model_info["tier"],
     }
 
 

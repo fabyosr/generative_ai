@@ -45,10 +45,14 @@ AVAILABLE_MODELS = {
         "gpt-3.5-turbo",
     ],
     "groq": [
-        "llama3-70b-8192",
-        "llama3-8b-8192",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it",
+        # Modelos de produção ativos em julho/2026
+        # Referência: https://console.groq.com/docs/models
+        # Todos com contexto 131k e suporte a tool use / JSON mode
+        "openai/gpt-oss-120b",          # mais capaz — substitui llama-3.3-70b
+        "openai/gpt-oss-20b",           # rápido — substitui llama-3.1-8b
+        "meta-llama/llama-4-maverick-17b-128e-instruct",  # preview — multimodal
+        "meta-llama/llama-4-scout-17b-16e-instruct",      # preview — multimodal leve
+        "moonshotai/kimi-k2-instruct-0905",               # preview — raciocínio
     ],
 }
 
@@ -61,8 +65,154 @@ PROVIDER_LABELS = {
 
 
 # ---------------------------------------------------------------------------
+# Catálogo de modelos — janela de contexto e preços por token (USD/1K tokens)
+# ---------------------------------------------------------------------------
+# Fonte preços OpenAI: https://openai.com/pricing  (julho/2026)
+# Fonte preços Groq:   https://groq.com/pricing    (julho/2026)
+# Fonte HF Hub: inferência via Inference Providers — cobrança variável
+# por provider (Together, Nebius, Novita); usamos estimativa conservadora.
+#
+# Formato: (input_per_1k, output_per_1k) em USD
+# Janela de contexto em tokens (número inteiro)
+# ---------------------------------------------------------------------------
+
+MODEL_CATALOG: dict[str, dict] = {
+
+    # ── OpenAI ────────────────────────────────────────────────────────────
+    "gpt-4o-mini": {
+        "context_window": 128_000,
+        "price":          (0.000150, 0.000600),
+        "tier":           "paid",
+    },
+    "gpt-4o": {
+        "context_window": 128_000,
+        "price":          (0.002500, 0.010000),
+        "tier":           "paid",
+    },
+    "gpt-3.5-turbo": {
+        "context_window": 16_385,
+        "price":          (0.000500, 0.001500),
+        "tier":           "paid",
+    },
+
+    # ── Groq (produção — julho/2026) ──────────────────────────────────────
+    # Tier free: acesso a todos os modelos com rate limits (sem cobrança).
+    # Tier pago: por token, conforme preços abaixo.
+    # Contexto: todos os modelos Groq atuais suportam 131k tokens.
+    "openai/gpt-oss-120b": {
+        "context_window": 131_072,
+        "price":          (0.000150, 0.000600),   # $0.15/$0.60 por 1M → /1K
+        "tier":           "free+paid",
+    },
+    "openai/gpt-oss-20b": {
+        "context_window": 131_072,
+        "price":          (0.000075, 0.000300),   # $0.075/$0.30 por 1M → /1K
+        "tier":           "free+paid",
+    },
+    "meta-llama/llama-4-maverick-17b-128e-instruct": {
+        "context_window": 131_072,
+        "price":          (0.000200, 0.000600),   # preview — estimativa
+        "tier":           "free+paid",
+    },
+    "meta-llama/llama-4-scout-17b-16e-instruct": {
+        "context_window": 131_072,
+        "price":          (0.000110, 0.000340),   # $0.11/$0.34 por 1M → /1K
+        "tier":           "free+paid",
+    },
+    "moonshotai/kimi-k2-instruct-0905": {
+        "context_window": 131_072,
+        "price":          (0.001000, 0.003000),   # $1/$3 por 1M → /1K (raciocínio)
+        "tier":           "free+paid",
+    },
+
+    # ── HuggingFace Hub ───────────────────────────────────────────────────
+    # Cobrança via Inference Providers (Together, Nebius, Novita…).
+    # Preços variam por provider; usamos estimativa conservadora para estimativa.
+    "deepseek-ai/DeepSeek-R1-0528": {
+        "context_window": 163_840,               # 160k tokens
+        "price":          (0.000300, 0.000300),
+        "tier":           "paid",
+    },
+    "meta-llama/Llama-3.1-8B-Instruct": {
+        "context_window": 131_072,
+        "price":          (0.000050, 0.000080),
+        "tier":           "paid",
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3": {
+        "context_window": 32_768,
+        "price":          (0.000080, 0.000080),
+        "tier":           "paid",
+    },
+    "Qwen/Qwen2.5-72B-Instruct": {
+        "context_window": 131_072,
+        "price":          (0.000290, 0.000390),
+        "tier":           "paid",
+    },
+    "microsoft/Phi-4": {
+        "context_window": 16_384,
+        "price":          (0.000100, 0.000100),
+        "tier":           "paid",
+    },
+}
+
+# Fallbacks quando o modelo não estiver no catálogo
+_PROVIDER_DEFAULTS: dict[str, dict] = {
+    "openai": {"context_window": 16_385,  "price": (0.000500, 0.001500), "tier": "paid"},
+    "groq":   {"context_window": 131_072, "price": (0.000075, 0.000300), "tier": "free+paid"},
+    "hf_hub": {"context_window": 32_768,  "price": (0.000100, 0.000100), "tier": "paid"},
+}
+
+
+def get_model_info(provider: str, model: str) -> dict:
+    """
+    Retorna as informações do catálogo para um modelo específico.
+
+    Busca pelo nome exato do modelo no MODEL_CATALOG.
+    Se não encontrar, usa o fallback do provedor.
+
+    Args:
+        provider: Provedor LLM ("openai" | "groq" | "hf_hub").
+        model:    Nome/ID do modelo.
+
+    Returns:
+        dict com chaves: context_window (int), price (tuple), tier (str).
+    """
+    return MODEL_CATALOG.get(model) or _PROVIDER_DEFAULTS.get(provider) or {
+        "context_window": 4_096,
+        "price":          (0.000100, 0.000100),
+        "tier":           "unknown",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Funções privadas de instanciação por provedor
 # ---------------------------------------------------------------------------
+
+def _validate_key(key_name: str, provider_label: str, url: str) -> str:
+    """
+    Valida e retorna uma chave de API, lançando ValueError descritivo se ausente.
+
+    Args:
+        key_name:       Nome da chave no secrets.toml (ex: "GROQ_API_KEY").
+        provider_label: Nome amigável do provedor para a mensagem de erro.
+        url:            URL para obter a chave.
+
+    Returns:
+        str: Valor da chave.
+
+    Raises:
+        ValueError: Se a chave não estiver configurada.
+    """
+    key = get_api_key(key_name)
+    if not key:
+        raise ValueError(
+            f"{key_name} não encontrada. "
+            f"Configure em .streamlit/secrets.toml:\n\n"
+            f"  {key_name} = \"...\"\n\n"
+            f"Obtenha em: {url}"
+        )
+    return key
+
 
 def _model_hf_hub(model: str, temperature: float) -> ChatHuggingFace:
     """
@@ -88,14 +238,19 @@ def _model_hf_hub(model: str, temperature: float) -> ChatHuggingFace:
     Returns:
         ChatHuggingFace: LLM com interface de chat padronizada.
     """
+    token = _validate_key(
+        "HUGGINGFACEHUB_API_TOKEN",
+        "HuggingFace Hub",
+        "https://huggingface.co/settings/tokens",
+    )
     endpoint = HuggingFaceEndpoint(
         repo_id=model,
         temperature=temperature,
         return_full_text=False,
         max_new_tokens=1024,
         task="text-generation",
-        provider="auto",                          # ← obrigatório no HF atual
-        huggingfacehub_api_token=get_api_key("HUGGINGFACEHUB_API_TOKEN"),
+        provider="auto",
+        huggingfacehub_api_token=token,
     )
     return ChatHuggingFace(llm=endpoint)
 
@@ -118,7 +273,11 @@ def _model_openai(model: str, temperature: float) -> ChatOpenAI:
     return ChatOpenAI(
         model=model,
         temperature=temperature,
-        api_key=get_api_key("OPENAI_API_KEY"),
+        api_key=_validate_key(
+            "OPENAI_API_KEY",
+            "OpenAI",
+            "https://platform.openai.com/api-keys",
+        ),
     )
 
 
@@ -126,11 +285,25 @@ def _model_groq(model: str, temperature: float) -> ChatGroq:
     """
     Instancia um modelo hospedado na Groq (inferência ultra-rápida).
 
-    A chave GROQ_API_KEY é passada explicitamente via get_api_key(),
-    lendo diretamente do st.secrets a cada instanciação. Isso resolve
-    o AuthenticationError 401 causado por race conditions entre ciclos
-    de re-execução do Streamlit, onde os.environ pode ainda não ter
-    recebido a chave quando o ChatGroq é instanciado.
+    A chave é lida diretamente do st.secrets via get_api_key() e passada
+    explicitamente no construtor como `api_key` — nome correto do parâmetro
+    no SDK groq>=0.9 / langchain-groq>=0.2.
+
+    Por que não usar `groq_api_key`:
+        O parâmetro `groq_api_key` foi renomeado para `api_key` nas versões
+        recentes do langchain-groq. Usar o nome antigo resulta em o SDK
+        ignorar o valor passado e tentar ler de os.environ, onde a chave
+        pode não estar disponível neste ciclo do Streamlit → 401.
+
+    Por que não depender de os.environ:
+        O Streamlit re-executa o script inteiro a cada interação. A janela
+        entre load_api_keys() injetar em os.environ e o ChatGroq ser
+        instanciado pode ser zero em alguns ciclos, causando 401 intermitente.
+        Passar explicitamente elimina essa race condition.
+
+    Validação:
+        Lança ValueError descritivo se a chave não estiver configurada,
+        evitando o 401 genérico do SDK que não informa onde configurar.
 
     Args:
         model:       ID do modelo Groq (ex: "llama3-70b-8192").
@@ -138,12 +311,19 @@ def _model_groq(model: str, temperature: float) -> ChatGroq:
 
     Returns:
         ChatGroq: LLM com interface de chat.
+
+    Raises:
+        ValueError: Se GROQ_API_KEY não estiver configurada no secrets.toml.
     """
     return ChatGroq(
         model=model,
         temperature=temperature,
         max_retries=2,
-        groq_api_key=get_api_key("GROQ_API_KEY"),
+        api_key=_validate_key(
+            "GROQ_API_KEY",
+            "Groq",
+            "https://console.groq.com/keys",
+        ),
     )
 
 

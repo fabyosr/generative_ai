@@ -53,8 +53,9 @@ from core.rag        import build_retriever, build_rag_chain, EMBEDDING_MODEL
 from core.intent     import classify_intent, IntentType
 from core.cache      import SemanticCache
 from core.reranker   import Reranker
-from core.analytics  import compute_analytics
-from core.clustering import cluster_queries
+from core.analytics    import compute_analytics
+from core.clustering   import cluster_queries
+from core.think_parser import parse_think
 from core.metrics    import (
     LatencyTimer,
     compute_history_metrics,
@@ -72,6 +73,7 @@ from ui.pipeline_trace import (
     cache_detail,
     rerank_detail,
     rag_retrieval_detail,
+    cot_detail,
 )
 
 
@@ -132,6 +134,7 @@ def _init_session_state() -> None:
         "last_intent_result":    None,
         "last_cache_result":     None,
         "last_rerank_result":    None,
+        "last_think_result":     None,
         "latency_history":       [],
         # Clustering: acumula apenas RAG queries (não chitchat)
         "rag_query_history":     [],
@@ -185,7 +188,6 @@ def _maybe_reindex(uploads: list) -> None:
     """
     current_names = [f.name for f in uploads]
     if st.session_state.indexed_files != current_names:
-        placeholder = st.empty()
         with st.spinner("⚙️ Indexando documentos…"):
             st.session_state.retriever     = build_retriever(
                 uploads,
@@ -217,7 +219,20 @@ def _process_chitchat(query: str, llm, trace: PipelineTrace) -> tuple[str, list]
         fn        = _run,
         detail_fn = lambda r: f"{len(r.content.split())} palavras geradas",
     )
-    return response.content, []
+
+    # Extrai bloco <think> se presente
+    think = parse_think(response.content)
+    st.session_state.last_think_result = think
+    trace.run_step(
+        label     = "Parsing de chain-of-thought",
+        icon      = "🧠",
+        fn        = lambda: think,
+        detail_fn = cot_detail,
+    )
+    if think.used_cot:
+        trace.add_cot_block(think)
+
+    return think.clean_answer, []
 
 
 def _process_followup(query: str, llm, trace: PipelineTrace) -> tuple[str, list]:
@@ -249,7 +264,19 @@ def _process_followup(query: str, llm, trace: PipelineTrace) -> tuple[str, list]
         fn        = _run,
         detail_fn = lambda r: f"{len(r.content.split())} palavras geradas",
     )
-    return response.content, last_docs
+
+    think = parse_think(response.content)
+    st.session_state.last_think_result = think
+    trace.run_step(
+        label     = "Parsing de chain-of-thought",
+        icon      = "🧠",
+        fn        = lambda: think,
+        detail_fn = cot_detail,
+    )
+    if think.used_cot:
+        trace.add_cot_block(think)
+
+    return think.clean_answer, last_docs
 
 
 def _process_rag(
@@ -292,14 +319,34 @@ def _process_rag(
         detail_fn = lambda r: rag_retrieval_detail(r.get("context", [])),
     )
 
-    answer       = rag_result["answer"]
+    raw_answer   = rag_result["answer"]
     context_docs = rag_result.get("context", [])
 
+    # Extrai <think> da resposta RAG imediatamente após geração
+    think = parse_think(raw_answer)
+    st.session_state.last_think_result = think
+    trace.run_step(
+        label     = "Parsing de chain-of-thought",
+        icon      = "🧠",
+        fn        = lambda: think,
+        detail_fn = cot_detail,
+    )
+    if think.used_cot:
+        trace.add_cot_block(think)
+
+    answer = think.clean_answer   # resposta limpa para o usuário
+
     # --- 3. Reranker ---
+    reranker.configure(top_k=config.get("reranker_max_k", 3))
     rerank_result = trace.run_step(
         label     = "Rerankeando chunks (cross-encoder)",
         icon      = "🔀",
-        fn        = lambda: reranker.rerank(query, context_docs),
+        fn        = lambda: reranker.rerank(
+            query,
+            context_docs,
+            method    = config.get("reranker_method", "top_k"),
+            min_score = config.get("reranker_min_score", 0.0),
+        ),
         detail_fn = rerank_detail,
     )
     st.session_state.last_rerank_result = rerank_result
@@ -521,11 +568,15 @@ def main() -> None:
             help="Exibe o trace do pipeline (thinking box) no chat.",
         )
 
+    # chat_input fora das tabs → ancora abaixo do container de histórico
+    # independente da aba ativa, sempre visível e em posição fixa
+    user_query = st.chat_input("Digite sua pergunta sobre os documentos…")
+
     tab_chat, tab_obs = st.tabs(["💬 Chat", "🔍 Observabilidade"])
 
     with tab_chat:
+        # Container scrollável — o input acima fica ancorado abaixo dele
         render_chat_history(st.session_state.chat_history)
-        user_query = st.chat_input("Digite sua pergunta sobre os documentos…")
         if user_query:
             _process_query(user_query, config)
 
