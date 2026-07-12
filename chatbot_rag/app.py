@@ -185,6 +185,7 @@ def _maybe_reindex(uploads: list) -> None:
     """
     current_names = [f.name for f in uploads]
     if st.session_state.indexed_files != current_names:
+        placeholder = st.empty()
         with st.spinner("⚙️ Indexando documentos…"):
             st.session_state.retriever     = build_retriever(
                 uploads,
