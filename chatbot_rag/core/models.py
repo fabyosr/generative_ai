@@ -31,13 +31,11 @@ from core.secrets import get_api_key
 AVAILABLE_MODELS = {
     "hf_hub": [
         # Modelos validados com HuggingFace Inference Providers (provider="auto")
-        # O parâmetro provider="auto" seleciona automaticamente o melhor
-        # provider disponível para cada modelo (Together, Nebius, Novita, etc.)
-        "deepseek-ai/DeepSeek-R1-0528",
-        "meta-llama/Llama-3.1-8B-Instruct",   # era Meta-Llama-3-8B (descontinuado)
-        "mistralai/Mistral-7B-Instruct-v0.3",  # era v0.2 (descontinuado)
-        "Qwen/Qwen2.5-72B-Instruct",
-        "microsoft/Phi-4",                      # era Phi-3-mini (descontinuado)
+        # Apenas modelos chat-compatible e disponíveis em julho/2026
+        "deepseek-ai/DeepSeek-R1-0528",       # 671B MoE, CoT explícito (<think>)
+        "meta-llama/Llama-3.1-8B-Instruct",   # leve, rápido, chat-compatible
+        "Qwen/Qwen2.5-72B-Instruct",           # 72B, multilíngue, chat-compatible
+        "Qwen/Qwen2.5-7B-Instruct",            # 7B, mais rápido, chat-compatible
     ],
     "openai": [
         "gpt-4o-mini",
@@ -45,14 +43,11 @@ AVAILABLE_MODELS = {
         "gpt-3.5-turbo",
     ],
     "groq": [
-        # Modelos de produção ativos em julho/2026
-        # Referência: https://console.groq.com/docs/models
-        # Todos com contexto 131k e suporte a tool use / JSON mode
-        "openai/gpt-oss-120b",          # mais capaz — substitui llama-3.3-70b
-        "openai/gpt-oss-20b",           # rápido — substitui llama-3.1-8b
-        "meta-llama/llama-4-maverick-17b-128e-instruct",  # preview — multimodal
-        "meta-llama/llama-4-scout-17b-16e-instruct",      # preview — multimodal leve
-        "moonshotai/kimi-k2-instruct-0905",               # preview — raciocínio
+        # Modelos de produção confirmados ativos em julho/2026
+        # Fonte: https://console.groq.com/docs/models
+        "openai/gpt-oss-120b",                        # 120B, 500 t/s, 131k ctx
+        "openai/gpt-oss-20b",                         # 20B, rápido, 131k ctx
+        "meta-llama/llama-4-scout-17b-16e-instruct",  # MoE, multimodal, 131k ctx
     ],
 }
 
@@ -95,41 +90,26 @@ MODEL_CATALOG: dict[str, dict] = {
         "tier":           "paid",
     },
 
-    # ── Groq (produção — julho/2026) ──────────────────────────────────────
-    # Tier free: acesso a todos os modelos com rate limits (sem cobrança).
-    # Tier pago: por token, conforme preços abaixo.
-    # Contexto: todos os modelos Groq atuais suportam 131k tokens.
+    # ── Groq (produção confirmada — julho/2026) ───────────────────────────
     "openai/gpt-oss-120b": {
         "context_window": 131_072,
-        "price":          (0.000150, 0.000600),   # $0.15/$0.60 por 1M → /1K
+        "price":          (0.000150, 0.000600),
         "tier":           "free+paid",
     },
     "openai/gpt-oss-20b": {
         "context_window": 131_072,
-        "price":          (0.000075, 0.000300),   # $0.075/$0.30 por 1M → /1K
-        "tier":           "free+paid",
-    },
-    "meta-llama/llama-4-maverick-17b-128e-instruct": {
-        "context_window": 131_072,
-        "price":          (0.000200, 0.000600),   # preview — estimativa
+        "price":          (0.000075, 0.000300),
         "tier":           "free+paid",
     },
     "meta-llama/llama-4-scout-17b-16e-instruct": {
         "context_window": 131_072,
-        "price":          (0.000110, 0.000340),   # $0.11/$0.34 por 1M → /1K
-        "tier":           "free+paid",
-    },
-    "moonshotai/kimi-k2-instruct-0905": {
-        "context_window": 131_072,
-        "price":          (0.001000, 0.003000),   # $1/$3 por 1M → /1K (raciocínio)
+        "price":          (0.000110, 0.000340),
         "tier":           "free+paid",
     },
 
     # ── HuggingFace Hub ───────────────────────────────────────────────────
-    # Cobrança via Inference Providers (Together, Nebius, Novita…).
-    # Preços variam por provider; usamos estimativa conservadora para estimativa.
     "deepseek-ai/DeepSeek-R1-0528": {
-        "context_window": 163_840,               # 160k tokens
+        "context_window": 163_840,
         "price":          (0.000300, 0.000300),
         "tier":           "paid",
     },
@@ -138,19 +118,14 @@ MODEL_CATALOG: dict[str, dict] = {
         "price":          (0.000050, 0.000080),
         "tier":           "paid",
     },
-    "mistralai/Mistral-7B-Instruct-v0.3": {
-        "context_window": 32_768,
-        "price":          (0.000080, 0.000080),
-        "tier":           "paid",
-    },
     "Qwen/Qwen2.5-72B-Instruct": {
         "context_window": 131_072,
         "price":          (0.000290, 0.000390),
         "tier":           "paid",
     },
-    "microsoft/Phi-4": {
-        "context_window": 16_384,
-        "price":          (0.000100, 0.000100),
+    "Qwen/Qwen2.5-7B-Instruct": {
+        "context_window": 131_072,
+        "price":          (0.000070, 0.000100),
         "tier":           "paid",
     },
 }

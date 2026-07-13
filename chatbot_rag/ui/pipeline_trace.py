@@ -341,6 +341,28 @@ class PipelineTrace:
         self._render()
         self._active = False
 
+    def get_html(self) -> str:
+        """
+        Retorna o HTML completo do trace para persistência no session_state.
+
+        Chamado após finish() para salvar o estado final do trace.
+        Usado por render_chat_history() para re-renderizar traces de
+        interações anteriores sem precisar re-executar o pipeline.
+
+        Returns:
+            str: HTML completo da caixa de pensamento.
+        """
+        steps_joined = "\n".join(self._steps_html)
+        return (
+            f'<div class="thinking-box">'
+            f'  <div class="thinking-header">'
+            f'    <span>⚙️</span>'
+            f'    <span>Processamento do Agente</span>'
+            f'  </div>'
+            f'  {steps_joined}'
+            f'</div>'
+        )
+
     # -----------------------------------------------------------------------
     # Privados
     # -----------------------------------------------------------------------

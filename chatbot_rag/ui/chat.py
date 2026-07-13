@@ -32,22 +32,56 @@ def render_chat_history(chat_history: list) -> None:
     """
     Renderiza o histórico de mensagens dentro de um container scrollável.
 
-    O uso de st.container(height=CHAT_CONTAINER_HEIGHT) fixa a altura
-    da área de mensagens, fazendo o st.chat_input se posicionar sempre
-    imediatamente abaixo — comportamento consistente independente do
-    volume de mensagens no histórico.
+    Exibe o pipeline trace (HTML estático) entre cada par Human/AI,
+    re-renderizando os traces salvos no session_state. Isso garante
+    que os traces persistam entre re-execuções do Streamlit sem
+    precisar re-executar o pipeline.
 
     Args:
         chat_history: Lista de AIMessage e HumanMessage do session_state.
     """
+    traces     = st.session_state.get("chat_history_traces", [])
+    show_trace = st.session_state.get("show_pipeline_trace", True)
+
+    # Injeta o CSS do trace uma vez (necessário para os traces históricos)
+    if traces and show_trace:
+        from ui.pipeline_trace import THINKING_BOX_CSS
+        if "thinking_css_injected" not in st.session_state:
+            st.markdown(THINKING_BOX_CSS, unsafe_allow_html=True)
+            st.session_state.thinking_css_injected = True
+
     with st.container(height=CHAT_CONTAINER_HEIGHT, border=False):
-        for message in chat_history:
-            if isinstance(message, AIMessage):
-                with st.chat_message("assistant", avatar=AVATAR_AI):
-                    st.markdown(message.content)
-            elif isinstance(message, HumanMessage):
+        # Índice de traces: cada par (HumanMessage, AIMessage) consome 1 trace
+        trace_idx = 0
+
+        i = 0
+        while i < len(chat_history):
+            msg = chat_history[i]
+
+            if isinstance(msg, HumanMessage):
                 with st.chat_message("human", avatar=AVATAR_HUMAN):
-                    st.markdown(message.content)
+                    st.markdown(msg.content)
+
+                # Pipeline trace entre human e AI (se disponível e habilitado)
+                if show_trace and trace_idx < len(traces):
+                    st.markdown(traces[trace_idx], unsafe_allow_html=True)
+                    trace_idx += 1
+
+                # Próxima mensagem é a resposta AI correspondente
+                i += 1
+                if i < len(chat_history) and isinstance(chat_history[i], AIMessage):
+                    with st.chat_message("assistant", avatar=AVATAR_AI):
+                        st.markdown(chat_history[i].content)
+                    i += 1
+
+            elif isinstance(msg, AIMessage):
+                # Primeira mensagem de boas-vindas (sem human antes)
+                with st.chat_message("assistant", avatar=AVATAR_AI):
+                    st.markdown(msg.content)
+                i += 1
+
+            else:
+                i += 1
 
 
 def render_user_message(query: str) -> None:

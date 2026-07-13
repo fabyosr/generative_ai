@@ -136,6 +136,8 @@ def _init_session_state() -> None:
         "last_rerank_result":    None,
         "last_think_result":     None,
         "latency_history":       [],
+        # HTML dos pipeline traces — índice par com chat_history (1 trace por par human/AI)
+        "chat_history_traces":   [],
         # Clustering: acumula apenas RAG queries (não chitchat)
         "rag_query_history":     [],
         "last_clustering":       None,
@@ -337,15 +339,15 @@ def _process_rag(
     answer = think.clean_answer   # resposta limpa para o usuário
 
     # --- 3. Reranker ---
-    reranker.configure(top_k=config.get("reranker_max_k", 3))
     rerank_result = trace.run_step(
         label     = "Rerankeando chunks (cross-encoder)",
         icon      = "🔀",
         fn        = lambda: reranker.rerank(
             query,
             context_docs,
-            method    = config.get("reranker_method", "top_k"),
+            method    = config.get("reranker_method",    "top_k"),
             min_score = config.get("reranker_min_score", 0.0),
+            top_k     = config.get("reranker_max_k",     3),
         ),
         detail_fn = rerank_detail,
     )
@@ -367,145 +369,219 @@ def _process_rag(
 # Processamento principal
 # =============================================================================
 
+def _render_error(title: str, message: str, hint: str = "") -> None:
+    """Exibe erro amigável no chat em vez de exceção crua."""
+    with st.chat_message("assistant", avatar="⚠️"):
+        st.error(f"**{title}**\n\n{message}", icon="🚨")
+        if hint:
+            st.info(hint, icon="💡")
+
+
+def _handle_api_error(e: Exception, provider: str) -> bool:
+    """
+    Trata erros de API conhecidos com mensagens amigáveis.
+
+    Returns:
+        True se o erro foi tratado (exibiu mensagem), False se deve re-raise.
+    """
+    err_str = str(e)
+
+    # Erro 402 — créditos HuggingFace esgotados
+    if "402" in err_str or "depleted" in err_str.lower() or "credits" in err_str.lower():
+        _render_error(
+            "Créditos HuggingFace esgotados",
+            "Você atingiu o limite mensal de créditos gratuitos do HuggingFace Inference Providers.",
+            "💳 Acesse https://huggingface.co/settings/billing para adquirir créditos pré-pagos "
+            "ou assine o plano PRO (20x mais uso incluído). "
+            "Alternativamente, troque para Groq ou OpenAI na sidebar.",
+        )
+        return True
+
+    # Erro 401 — chave inválida
+    if "401" in err_str or "invalid_api_key" in err_str.lower() or "authentication" in err_str.lower():
+        _render_error(
+            "Chave de API inválida",
+            f"A chave configurada para **{provider}** foi rejeitada pelo servidor.",
+            f"Verifique o valor de `{provider.upper()}_API_KEY` no `.streamlit/secrets.toml`.",
+        )
+        return True
+
+    # Erro 404 — modelo não encontrado
+    if "404" in err_str or "model_not_found" in err_str.lower() or "does not exist" in err_str.lower():
+        _render_error(
+            "Modelo não encontrado",
+            f"O modelo selecionado não está disponível no provedor **{provider}**.",
+            "Selecione outro modelo na sidebar.",
+        )
+        return True
+
+    # Erro 400 — modelo deprecado
+    if "400" in err_str or "decommissioned" in err_str.lower() or "deprecated" in err_str.lower():
+        _render_error(
+            "Modelo descontinuado",
+            f"O modelo selecionado foi descontinuado pelo provedor **{provider}**.",
+            "Selecione outro modelo na sidebar.",
+        )
+        return True
+
+    # Erro de validação da chave (ValueError do _validate_key)
+    if isinstance(e, ValueError) and "não encontrada" in err_str:
+        _render_error(
+            "Chave de API não configurada",
+            err_str,
+        )
+        return True
+
+    return False
+
+
 def _process_query(query: str, config: dict) -> None:
     """
     Orquestra o pipeline completo para uma mensagem do usuário.
 
-    Fluxo:
-        1. Renderiza mensagem humana
-        2. Instancia LLM
-        3. Abre PipelineTrace (thinking box)
-        4. Classifica intenção → despacha para handler correto
-        5. Finaliza trace
-        6. Calcula analytics e métricas
-        7. Executa clustering (se ≥ 5 RAG queries)
-        8. Renderiza resposta
+    Mudanças v2:
+        - Pipeline trace salvo no session_state como HTML estático →
+          persiste entre re-execuções e aparece corretamente no histórico
+        - Erros de API tratados com mensagens amigáveis (_handle_api_error)
+        - Spinners removidos — o PipelineTrace já indica progresso
+        - Trace renderizado ANTES da resposta final no mesmo fluxo linear
     """
     render_user_message(query)
 
-    llm = get_model(
-        provider    = config["provider"],
-        model       = config["model"],
-        temperature = config["temperature"],
-    )
+    try:
+        llm = get_model(
+            provider    = config["provider"],
+            model       = config["model"],
+            temperature = config["temperature"],
+        )
+    except Exception as e:
+        if not _handle_api_error(e, config["provider"]):
+            _render_error("Erro ao inicializar modelo", str(e))
+        return
 
     timer = LatencyTimer()
     timer.start()
 
-    # -----------------------------------------------------------------------
-    # Pipeline Trace (thinking box)
-    # -----------------------------------------------------------------------
-    with st.chat_message("assistant", avatar="⚙️"):
-        trace = PipelineTrace()
+    try:
+        # -------------------------------------------------------------------
+        # Pipeline Trace — renderizado inline, salvo como HTML no session_state
+        # -------------------------------------------------------------------
+        with st.chat_message("assistant", avatar="⚙️"):
+            trace = PipelineTrace()
 
-        trace.add_info(
-            "📨", "Query recebida",
-            f'<code>"{query[:80]}{"…" if len(query) > 80 else ""}"</code> · '
-            f"{len(query.split())} palavras · "
-            f"Modelo: <code>{config['model']}</code>",
-        )
-        trace.add_divider()
-
-        # --- Intenção ---
-        intent_result = trace.run_step(
-            label     = "Classificando intenção",
-            icon      = "🎯",
-            fn        = lambda: classify_intent(query, st.session_state.chat_history, llm),
-            detail_fn = intent_detail,
-        )
-        st.session_state.last_intent_result  = intent_result
-        st.session_state.last_cache_result   = None
-        st.session_state.last_rerank_result  = None
-
-        trace.add_divider()
-
-        # --- Despacha por intenção ---
-        if intent_result.intent == IntentType.CHITCHAT:
-            answer, context_docs = _process_chitchat(query, llm, trace)
-
-        elif intent_result.intent == IntentType.FOLLOWUP:
-            answer, context_docs = _process_followup(query, llm, trace)
-
-        else:  # RAG_QUERY
-            answer, context_docs = _process_rag(query, llm, config, trace)
-            # Acumula query RAG para clustering
-            st.session_state.rag_query_history.append(query)
-
-        # --- Analytics ---
-        trace.add_divider()
-        analytics = trace.run_step(
-            label     = "Calculando analytics de qualidade",
-            icon      = "📊",
-            fn        = lambda: compute_analytics(
-                query          = query,
-                answer         = answer,
-                context_docs   = context_docs,
-                provider       = config["provider"],
-                model          = config["model"],
-                rerank_result  = st.session_state.last_rerank_result,
-                cache_result   = st.session_state.last_cache_result,
-                embeddings     = st.session_state.embeddings,
-                history_tokens = st.session_state.last_history_metrics.get("total_tokens", 0),
-            ),
-            detail_fn = lambda a: (
-                f"Grounding: <strong>{a.grounding_label}</strong> "
-                f"({a.grounding_score:.3f}) · "
-                f"Risco alucinação: {a.hallucination_risk*100:.0f}% · "
-                f"Hedging: {a.hedging_rate:.2f} · "
-                f"Custo est.: ${a.estimated_cost_usd:.6f}"
-            ),
-        )
-
-        # --- Clustering (se ≥ 5 RAG queries) ---
-        rag_queries = st.session_state.rag_query_history
-        if len(rag_queries) >= 5:
-            clustering = trace.run_step(
-                label     = f"Clusterizando intenções ({len(rag_queries)} queries)",
-                icon      = "🗺",
-                fn        = lambda: cluster_queries(
-                    queries    = rag_queries,
-                    embeddings = st.session_state.embeddings,
-                    llm        = llm,
-                ),
-                detail_fn = lambda c: (
-                    f"{c.n_clusters} clusters · "
-                    f"Cobertura: {c.coverage*100:.0f}% · "
-                    f"{len(c.outliers)} outlier(s) · "
-                    f"{c.latency_ms:.0f}ms"
-                ) if not c.error else f"⚠️ {c.error}",
-            )
-            st.session_state.last_clustering = clustering
-        else:
-            remaining = 5 - len(rag_queries)
             trace.add_info(
-                "🗺", "Clustering de intenções",
-                f"Aguardando mais {remaining} query(ies) RAG para ativar",
+                "📨", "Query recebida",
+                f'<code>"{query[:80]}{"…" if len(query) > 80 else ""}"</code> · '
+                f"{len(query.split())} palavras · "
+                f"Modelo: <code>{config['model']}</code>",
+            )
+            trace.add_divider()
+
+            # Intenção
+            intent_result = trace.run_step(
+                label     = "Classificando intenção",
+                icon      = "🎯",
+                fn        = lambda: classify_intent(query, st.session_state.chat_history, llm),
+                detail_fn = intent_detail,
+            )
+            st.session_state.last_intent_result = intent_result
+            st.session_state.last_cache_result  = None
+            st.session_state.last_rerank_result = None
+
+            trace.add_divider()
+
+            # Despacha por intenção
+            if intent_result.intent == IntentType.CHITCHAT:
+                answer, context_docs = _process_chitchat(query, llm, trace)
+            elif intent_result.intent == IntentType.FOLLOWUP:
+                answer, context_docs = _process_followup(query, llm, trace)
+            else:
+                answer, context_docs = _process_rag(query, llm, config, trace)
+                st.session_state.rag_query_history.append(query)
+
+            # Analytics
+            trace.add_divider()
+            analytics = trace.run_step(
+                label     = "Calculando analytics de qualidade",
+                icon      = "📊",
+                fn        = lambda: compute_analytics(
+                    query          = query,
+                    answer         = answer,
+                    context_docs   = context_docs,
+                    provider       = config["provider"],
+                    model          = config["model"],
+                    rerank_result  = st.session_state.last_rerank_result,
+                    cache_result   = st.session_state.last_cache_result,
+                    embeddings     = st.session_state.embeddings,
+                    history_tokens = st.session_state.last_history_metrics.get("total_tokens", 0),
+                ),
+                detail_fn = lambda a: (
+                    f"Grounding: <strong>{a.grounding_label}</strong> "
+                    f"({a.grounding_score:.3f}) · "
+                    f"Risco alucinação: {a.hallucination_risk*100:.0f}% · "
+                    f"Custo est.: ${a.estimated_cost_usd:.6f}"
+                ),
             )
 
-        # --- Finaliza trace ---
-        cache_status = ""
-        if st.session_state.last_cache_result:
-            cache_status = "Cache HIT ⚡" if st.session_state.last_cache_result.hit else "Cache MISS"
+            # Clustering
+            rag_queries = st.session_state.rag_query_history
+            if len(rag_queries) >= 5:
+                clustering = trace.run_step(
+                    label     = f"Clusterizando intenções ({len(rag_queries)} queries)",
+                    icon      = "🗺",
+                    fn        = lambda: cluster_queries(
+                        queries    = rag_queries,
+                        embeddings = st.session_state.embeddings,
+                        llm        = llm,
+                    ),
+                    detail_fn = lambda c: (
+                        f"{c.n_clusters} clusters · cobertura {c.coverage*100:.0f}% · "
+                        f"{len(c.outliers)} outlier(s) · {c.latency_ms:.0f}ms"
+                    ) if not c.error else f"⚠️ {c.error}",
+                )
+                st.session_state.last_clustering = clustering
+            else:
+                trace.add_info(
+                    "🗺", "Clustering",
+                    f"Aguardando {5 - len(rag_queries)} query(ies) RAG para ativar",
+                )
 
-        latency = timer.stop()
-        trace.finish(
-            summary=(
-                f"{intent_result.intent.value.upper()} · "
-                f"{cache_status or 'sem cache'} · "
-                f"Grounding: {analytics.grounding_score:.2f} · "
-                f"${analytics.estimated_cost_usd:.6f}"
+            # Finaliza trace
+            cache_status = ""
+            if st.session_state.last_cache_result:
+                cache_status = (
+                    "Cache HIT ⚡"
+                    if st.session_state.last_cache_result.hit
+                    else "Cache MISS"
+                )
+
+            latency = timer.stop()
+            trace.finish(
+                summary=(
+                    f"{intent_result.intent.value.upper()} · "
+                    f"{cache_status or 'sem cache'} · "
+                    f"Grounding: {analytics.grounding_score:.2f} · "
+                    f"${analytics.estimated_cost_usd:.6f}"
+                )
             )
-        )
+
+            # Salva HTML do trace no session_state para persistência
+            st.session_state.chat_history_traces.append(trace.get_html())
+
+    except Exception as e:
+        if not _handle_api_error(e, config["provider"]):
+            _render_error("Erro inesperado no pipeline", str(e),
+                          "Tente novamente ou troque de modelo/provedor.")
+        return
 
     # -----------------------------------------------------------------------
-    # Atualiza estado
+    # Atualiza estado e renderiza resposta final
     # -----------------------------------------------------------------------
     st.session_state.chat_history.append(HumanMessage(content=query))
     st.session_state.chat_history.append(AIMessage(content=answer))
     st.session_state.last_context_docs = context_docs
     st.session_state.last_analytics    = analytics
 
-    # Métricas
     history_metrics = compute_history_metrics(st.session_state.chat_history, config["provider"])
     rag_metrics     = compute_rag_metrics(context_docs, query, config["provider"])
     llm_metadata    = extract_llm_metadata(config["provider"], config["model"], config["temperature"])
@@ -516,7 +592,6 @@ def _process_query(query: str, config: dict) -> None:
     st.session_state.last_latency         = latency
     st.session_state.latency_history.append(latency)
 
-    # Resposta final
     render_ai_response(answer, latency, context_docs)
 
 
