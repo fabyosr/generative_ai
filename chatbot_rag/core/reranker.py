@@ -8,38 +8,32 @@ Responsabilidade:
     à query de forma muito mais precisa que o bi-encoder do retriever.
 
 Diferença entre bi-encoder (FAISS) e cross-encoder (reranker):
-    Bi-encoder:   Gera embeddings da query e dos chunks separadamente,
-                  compara por cosseno. Rápido, mas aproximado — não vê
-                  interações entre query e chunk.
-
-    Cross-encoder: Recebe (query, chunk) juntos em uma única passagem.
-                   Vê a interação direta entre os termos. Muito mais
-                   preciso, mas mais lento — por isso roda sobre um
-                   conjunto pequeno pré-filtrado pelo FAISS.
+    Bi-encoder:    Gera embeddings separados de query e chunk, compara
+                   por cosseno. Rápido, mas aproximado.
+    Cross-encoder: Recebe (query, chunk) juntos numa única passagem.
+                   Muito mais preciso, roda sobre conjunto pequeno pré-filtrado.
 
 Estratégia no pipeline:
-    FAISS retriever (fetch_k=10) → cross-encoder → top_k=3 melhores chunks
+    FAISS (fetch_k=20 candidatos) → cross-encoder → top_k melhores
 
 Modelo padrão:
-    BAAI/bge-reranker-v2-m3 — mesmo fabricante do BGE-M3 usado nos
-    embeddings. Excelente qualidade para português e multilíngue.
-    Alternativa mais leve: cross-encoder/ms-marco-MiniLM-L-6-v2
+    BAAI/bge-reranker-v2-m3 — multilíngue, alta qualidade para PT-BR.
 
-Métricas coletadas por RerankResult:
-    - scores_before: scores MMR originais do FAISS (se disponíveis)
-    - scores_after:  scores do cross-encoder por chunk
-    - docs_before:   quantidade de chunks antes do reranking
-    - docs_after:    quantidade de chunks após filtro top_k
-    - latency_ms:    tempo de reranking em ms
-    - top_score:     score mais alto do cross-encoder
-    - score_delta:   diferença entre maior e menor score (dispersão)
+Métodos de seleção de chunks:
+    top_k:     Sempre retorna os k melhores, independente do score.
+    threshold: Retorna todos acima de min_score (sem limite de k).
+    adaptive:  Combina — até k chunks, desde que acima de min_score.
+
+Nota de design:
+    top_k é passado diretamente no rerank() em vez de usar configure(),
+    evitando mutação de estado e race conditions entre ciclos do Streamlit.
 =============================================================================
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from langchain_core.documents import Document
 
@@ -54,23 +48,23 @@ class RerankResult:
     Encapsula os documentos rerankeados e as métricas do processo.
 
     Attributes:
-        docs:         Lista de Document reordenada pelo cross-encoder.
-        scores:       Score do cross-encoder para cada doc (mesma ordem).
-        docs_before:  Quantidade de chunks recebidos pelo reranker.
-        docs_after:   Quantidade de chunks retornados (top_k).
-        top_score:    Maior score atribuído pelo cross-encoder.
-        score_delta:  Dispersão: diferença entre maior e menor score.
-        latency_ms:   Tempo de execução do reranking em ms.
-        model_name:   Nome do modelo cross-encoder usado.
+        docs:        Documentos selecionados, ordenados por relevância.
+        scores:      Score do cross-encoder por doc (mesma ordem que docs).
+        docs_before: Quantidade de chunks recebidos do FAISS.
+        docs_after:  Quantidade de chunks retornados ao LLM.
+        top_score:   Score do chunk mais relevante.
+        score_delta: Dispersão entre melhor e pior score — alta = boa separação.
+        latency_ms:  Tempo de execução em milissegundos.
+        model_name:  Nome do modelo cross-encoder utilizado.
     """
     docs:        list[Document]
     scores:      list[float]
     docs_before: int
     docs_after:  int
-    top_score:   float        = 0.0
-    score_delta: float        = 0.0
-    latency_ms:  float        = 0.0
-    model_name:  str          = ""
+    top_score:   float = 0.0
+    score_delta: float = 0.0
+    latency_ms:  float = 0.0
+    model_name:  str   = ""
 
 
 # ---------------------------------------------------------------------------
@@ -81,69 +75,85 @@ class Reranker:
     """
     Reranker baseado em cross-encoder para reordenar chunks do RAG.
 
-    Carrega o modelo cross-encoder uma única vez e o reutiliza em todas
-    as chamadas, evitando overhead de carregamento por query.
+    O modelo é carregado apenas na primeira chamada (lazy loading),
+    evitando overhead de inicialização quando o reranker não é usado.
 
     Args:
         model_name: ID do modelo cross-encoder no HuggingFace Hub.
-        top_k:      Número de chunks a retornar após reranking.
-        device:     "cpu" | "cuda" | "mps". Padrão: "cpu".
+        top_k:      Número padrão de chunks a retornar (pode ser sobrescrito
+                    por chamada via parâmetro top_k no rerank()).
+        device:     "cpu" | "cuda" | "mps".
     """
 
-    # Modelo padrão: BGE-Reranker-v2-M3 — multilíngue, alta qualidade
     DEFAULT_MODEL = "BAAI/bge-reranker-v2-m3"
 
     def __init__(
         self,
-        model_name: str  = DEFAULT_MODEL,
-        top_k:      int  = 3,
-        device:     str  = "cpu",
+        model_name: str = DEFAULT_MODEL,
+        top_k:      int = 3,
+        device:     str = "cpu",
     ):
         self._model_name = model_name
         self._top_k      = top_k
         self._device     = device
-        self._model      = None   # lazy loading — carrega na primeira chamada
+        self._model      = None  # carregado na primeira chamada a rerank()
 
     def _load_model(self) -> None:
         """
-        Carrega o cross-encoder do HuggingFace (lazy loading).
+        Carrega o cross-encoder do HuggingFace Hub (lazy loading).
 
         Chamado automaticamente na primeira invocação de rerank().
-        Evita carregar o modelo se o reranker não for utilizado.
+        Lança ImportError descritivo se sentence-transformers não estiver
+        instalado, em vez do genérico ModuleNotFoundError.
         """
         try:
             from sentence_transformers import CrossEncoder
-            self._model = CrossEncoder(
-                self._model_name,
-                device=self._device,
-            )
+            self._model = CrossEncoder(self._model_name, device=self._device)
         except ImportError as e:
             raise ImportError(
                 "sentence-transformers é necessário para o reranker. "
                 "Instale com: pip install sentence-transformers"
             ) from e
 
-    def rerank(self, query: str, docs: list[Document]) -> RerankResult:
+    def rerank(
+        self,
+        query:     str,
+        docs:      list[Document],
+        method:    str        = "top_k",
+        min_score: float      = 0.0,
+        top_k:     int | None = None,
+    ) -> RerankResult:
         """
         Reordena os documentos por relevância em relação à query.
 
-        Etapas:
-            1. Lazy load do modelo cross-encoder (apenas na primeira chamada)
-            2. Formata pares (query, chunk_content) para o cross-encoder
-            3. Calcula scores de relevância para cada par
+        O parâmetro top_k pode ser sobrescrito por chamada, evitando
+        a necessidade de configure() e mutação de estado no objeto.
+        Isso é especialmente importante no Streamlit, onde o mesmo
+        objeto Reranker é reutilizado entre múltiplos ciclos de
+        re-execução com configurações diferentes da sidebar.
+
+        Fluxo:
+            1. Lazy load do modelo (só na primeira chamada)
+            2. Formata pares (query, chunk) para o cross-encoder
+            3. Calcula scores de relevância par a par
             4. Ordena por score decrescente
-            5. Retorna top_k documentos com métricas
+            5. Aplica método de seleção (top_k / threshold / adaptive)
+            6. Retorna RerankResult com docs e métricas
 
         Args:
-            query: Texto da query do usuário.
-            docs:  Lista de Document retornados pelo FAISS retriever.
+            query:     Texto da query do usuário.
+            docs:      Chunks candidatos vindos do FAISS.
+            method:    "top_k" | "threshold" | "adaptive".
+            min_score: Score mínimo (usado em threshold e adaptive).
+            top_k:     Override do k máximo. None = usa self._top_k.
 
         Returns:
-            RerankResult com docs reordenados, scores e métricas.
+            RerankResult com docs selecionados, scores e métricas.
         """
-        t0 = time.perf_counter()
+        t0          = time.perf_counter()
+        effective_k = top_k if top_k is not None else self._top_k
 
-        # Sem documentos → retorna vazio
+        # Sem documentos → retorna vazio sem chamar o modelo
         if not docs:
             return RerankResult(
                 docs        = [],
@@ -160,30 +170,43 @@ class Reranker:
 
         docs_before = len(docs)
 
-        # --- Formata pares para o cross-encoder ---
-        # O cross-encoder recebe (query, passage) e retorna um score
-        # de relevância — quanto maior, mais relevante o chunk.
-        pairs = [(query, doc.page_content) for doc in docs]
-
-        # --- Calcula scores ---
+        # --- Score de relevância par a par ---
+        pairs      = [(query, doc.page_content) for doc in docs]
         raw_scores = self._model.predict(pairs).tolist()
 
-        # --- Ordena por score decrescente e seleciona top_k ---
+        # --- Ordena por score decrescente ---
         scored_docs = sorted(
             zip(raw_scores, docs),
             key=lambda x: x[0],
             reverse=True,
         )
-        top_docs    = scored_docs[: self._top_k]
-        final_docs  = [doc   for _, doc   in top_docs]
-        final_scores = [round(float(score), 4) for score, _ in top_docs]
+
+        # --- Aplica método de seleção ---
+        if method == "threshold":
+            # Todos acima do score mínimo, sem limite de k
+            selected = [(s, d) for s, d in scored_docs if float(s) >= min_score]
+            if not selected:
+                selected = [scored_docs[0]]  # garante ao menos 1
+
+        elif method == "adaptive":
+            # Até effective_k, desde que acima de min_score
+            selected = [
+                (s, d) for s, d in scored_docs[:effective_k]
+                if float(s) >= min_score
+            ]
+            if not selected:
+                selected = [scored_docs[0]]  # garante ao menos 1
+
+        else:  # top_k (padrão)
+            selected = scored_docs[:effective_k]
+
+        final_docs   = [doc   for _, doc   in selected]
+        final_scores = [round(float(s), 4) for s, _ in selected]
 
         # --- Métricas de dispersão ---
-        top_score   = final_scores[0] if final_scores else 0.0
+        top_score   = final_scores[0]  if final_scores else 0.0
         worst_score = final_scores[-1] if final_scores else 0.0
         score_delta = round(top_score - worst_score, 4)
-
-        latency_ms = round((time.perf_counter() - t0) * 1000, 1)
 
         return RerankResult(
             docs        = final_docs,
@@ -192,7 +215,7 @@ class Reranker:
             docs_after  = len(final_docs),
             top_score   = round(top_score, 4),
             score_delta = score_delta,
-            latency_ms  = latency_ms,
+            latency_ms  = round((time.perf_counter() - t0) * 1000, 1),
             model_name  = self._model_name,
         )
 
@@ -203,5 +226,5 @@ class Reranker:
 
     @property
     def top_k(self) -> int:
-        """Número de chunks retornados após reranking."""
+        """Número padrão de chunks retornados (pode ser sobrescrito por chamada)."""
         return self._top_k
