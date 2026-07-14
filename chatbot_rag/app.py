@@ -56,6 +56,8 @@ from core.reranker   import Reranker
 from core.analytics    import compute_analytics
 from core.clustering   import cluster_queries
 from core.think_parser import parse_think
+from core.doc_summary  import extract_doc_summary, format_for_classifier
+from core.models       import get_model, get_classifier_model
 from core.metrics    import (
     LatencyTimer,
     compute_history_metrics,
@@ -69,6 +71,7 @@ from ui.chat           import render_chat_history, render_user_message, render_a
 from ui.observability  import render_observability_panel
 from ui.pipeline_trace import (
     PipelineTrace,
+    inject_trace_css,
     intent_detail,
     cache_detail,
     rerank_detail,
@@ -125,6 +128,9 @@ def _init_session_state() -> None:
         "semantic_cache":        None,
         "reranker":              None,
         "last_context_docs":     [],
+        # Resumo dos temas dos documentos para o classificador de intenção
+        "doc_knowledge_summary": "",
+        "doc_knowledge_prompt":  "",  # versão formatada para o system prompt
         # Métricas
         "last_rag_metrics":      {},
         "last_history_metrics":  {},
@@ -183,20 +189,37 @@ def _init_heavy_objects() -> None:
 # Indexação
 # =============================================================================
 
-def _maybe_reindex(uploads: list) -> None:
+def _maybe_reindex(uploads: list, classifier_llm=None) -> None:
     """
     Reconstrói FAISS apenas quando os arquivos mudaram.
-    Invalida cache semântico ao reindexar.
+    Após reindexar, extrai automaticamente o resumo dos temas dos
+    documentos para contextualizar o classificador de intenção.
+    Invalida o cache semântico ao reindexar.
     """
     current_names = [f.name for f in uploads]
     if st.session_state.indexed_files != current_names:
         with st.spinner("⚙️ Indexando documentos…"):
-            st.session_state.retriever     = build_retriever(
+            retriever = build_retriever(
                 uploads,
                 embeddings=st.session_state.embeddings,
             )
+            st.session_state.retriever     = retriever
             st.session_state.indexed_files = current_names
             st.session_state.semantic_cache.clear()
+
+        # Extrai resumo dos temas para o classificador
+        with st.spinner("🔍 Analisando temas dos documentos…"):
+            # Acessa os docs diretamente pelo retriever
+            try:
+                all_docs = retriever.vectorstore.docstore._dict.values()
+                docs_list = list(all_docs)
+            except Exception:
+                docs_list = []
+
+            summary = extract_doc_summary(docs_list, llm=classifier_llm)
+            st.session_state.doc_knowledge_summary = summary
+            st.session_state.doc_knowledge_prompt  = format_for_classifier(summary)
+
         st.toast(f"✅ {len(uploads)} documento(s) indexado(s)!", icon="📥")
 
 
@@ -477,11 +500,23 @@ def _process_query(query: str, config: dict) -> None:
             )
             trace.add_divider()
 
-            # Intenção
+            # Instancia classificador dedicado (modelo leve independente)
+            classifier_llm = get_classifier_model(
+                main_provider       = config["provider"],
+                classifier_provider = config.get("classifier_provider", "hf_serverless"),
+            )
+
+            # Intenção com modelo dedicado e contexto dos documentos
             intent_result = trace.run_step(
                 label     = "Classificando intenção",
                 icon      = "🎯",
-                fn        = lambda: classify_intent(query, st.session_state.chat_history, llm),
+                fn        = lambda: classify_intent(
+                    message        = query,
+                    chat_history   = st.session_state.chat_history,
+                    llm            = llm,
+                    classifier_llm = classifier_llm,
+                    doc_knowledge  = st.session_state.doc_knowledge_prompt,
+                ),
                 detail_fn = intent_detail,
             )
             st.session_state.last_intent_result = intent_result
@@ -603,6 +638,11 @@ def main() -> None:
     """Ciclo principal de renderização do Streamlit."""
     _init_session_state()
 
+    # CSS do pipeline trace injetado a cada ciclo — o Streamlit descarta
+    # o DOM entre re-execuções, então o <style> precisa ser re-injetado
+    # sempre para que os traces históricos mantenham o estilo correto.
+    inject_trace_css()
+
     secrets_status      = load_api_keys()
     available_providers = get_available_providers(secrets_status)
 
@@ -623,7 +663,7 @@ def main() -> None:
         """, unsafe_allow_html=True)
         st.stop()
 
-    _maybe_reindex(config["uploads"])
+    _maybe_reindex(config["uploads"], classifier_llm=None)  # resumo extraído sem LLM na primeira carga
 
     st.markdown("""
     <div style='margin-bottom:1.2rem;'>

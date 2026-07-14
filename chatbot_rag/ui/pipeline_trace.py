@@ -6,13 +6,18 @@ Responsabilidade:
     Renderizar no chat uma caixa de "pensamento" que mostra, passo a passo
     e em tempo real, tudo que o agente está processando.
 
-Design (v2):
-    - Fundo escuro (slate-900) com borda esquerda índigo vibrante
-      → contraste claro contra o fundo branco/cinza do chat do Streamlit
-    - Tipografia monospace com texto claro sobre fundo escuro
-    - Seção colapsável para bloco <think> do modelo (CoT interno)
-    - Badges coloridos por tipo de intenção/status
-    - Linha de resumo ao finalizar
+Solução para CSS que some entre interações:
+    O Streamlit reconstrói o DOM inteiro a cada re-execução do script.
+    CSS injetado via st.markdown() em ciclos anteriores é descartado.
+
+    Solução: inject_trace_css() é chamada em app.py/main() no INÍCIO
+    de CADA ciclo de renderização — antes das tabs, antes do histórico.
+    Isso garante que o CSS esteja sempre no DOM quando os traces
+    históricos (HTML estático salvo no session_state) são re-renderizados.
+
+    A flag "thinking_css_injected" foi REMOVIDA — ela impedia a
+    re-injeção nos ciclos seguintes, que é exatamente o que causava
+    o bug de perda de estilo.
 =============================================================================
 """
 
@@ -21,46 +26,42 @@ import streamlit as st
 
 
 # ---------------------------------------------------------------------------
-# CSS — injetado uma vez por sessão
+# CSS — referenciado por inject_trace_css() e embutido em get_html()
 # ---------------------------------------------------------------------------
 
 THINKING_BOX_CSS = """
 <style>
 /* ============================================================
-   Caixa principal de pensamento — fundo escuro para contrastar
-   com o fundo claro do chat do Streamlit
+   Caixa principal — fundo escuro para contrastar com o chat
    ============================================================ */
 .thinking-box {
-    background: #0f172a;                  /* slate-900 */
-    border: 1px solid #334155;            /* slate-700 */
-    border-left: 4px solid #6366f1;       /* indigo-500 — acento vibrante */
+    background: #0f172a !important;
+    border: 1px solid #334155;
+    border-left: 4px solid #6366f1;
     border-radius: 10px;
     padding: 14px 18px;
     margin: 4px 0 14px 0;
     font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
     font-size: 0.79rem;
     line-height: 1.75;
-    color: #cbd5e1;                       /* slate-300 */
+    color: #cbd5e1 !important;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
-    position: relative;
 }
 
-/* Header — título da caixa */
 .thinking-header {
     display: flex;
     align-items: center;
     gap: 8px;
     font-weight: 700;
     font-size: 0.75rem;
-    color: #818cf8;                       /* indigo-400 */
+    color: #818cf8;
     margin-bottom: 12px;
     padding-bottom: 8px;
-    border-bottom: 1px solid #1e293b;     /* slate-800 */
+    border-bottom: 1px solid #1e293b;
     letter-spacing: 0.08em;
     text-transform: uppercase;
 }
 
-/* Cada linha de etapa */
 .thinking-step {
     display: flex;
     align-items: flex-start;
@@ -73,46 +74,41 @@ THINKING_BOX_CSS = """
     min-width: 20px;
     font-size: 0.82rem;
     margin-top: 2px;
-    opacity: 0.9;
 }
 
 .thinking-step-content { flex: 1; }
 
 .thinking-step-label {
     font-weight: 600;
-    color: #e2e8f0;                       /* slate-200 */
+    color: #e2e8f0;
 }
 
 .thinking-step-detail {
-    color: #94a3b8;                       /* slate-400 */
+    color: #94a3b8;
     font-size: 0.74rem;
     margin-top: 2px;
 }
 
-/* Divisória */
 .thinking-divider {
     border: none;
     border-top: 1px solid #1e293b;
     margin: 8px 0;
 }
 
-/* Linha de resumo final */
 .thinking-summary {
     font-size: 0.73rem;
-    color: #64748b;                       /* slate-500 */
+    color: #64748b;
     font-style: italic;
     margin-top: 10px;
     padding-top: 8px;
     border-top: 1px solid #1e293b;
 }
 
-/* ============================================================
-   Bloco <think> do modelo — CoT interno
-   ============================================================ */
+/* Bloco CoT interno */
 .thinking-cot-block {
-    background: #1e293b;                  /* slate-800 */
+    background: #1e293b;
     border: 1px solid #334155;
-    border-left: 3px solid #a855f7;       /* purple-500 */
+    border-left: 3px solid #a855f7;
     border-radius: 6px;
     margin: 8px 0 4px 0;
     overflow: hidden;
@@ -123,17 +119,11 @@ THINKING_BOX_CSS = """
     align-items: center;
     gap: 6px;
     padding: 7px 12px;
-    cursor: pointer;
     font-size: 0.74rem;
     font-weight: 700;
-    color: #c084fc;                       /* purple-400 */
+    color: #c084fc;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    user-select: none;
-}
-
-.thinking-cot-header:hover {
-    background: rgba(168, 85, 247, 0.08);
 }
 
 .thinking-cot-content {
@@ -147,9 +137,7 @@ THINKING_BOX_CSS = """
     overflow-y: auto;
 }
 
-/* ============================================================
-   Badges coloridos inline
-   ============================================================ */
+/* Badges */
 .thinking-badge {
     display: inline-block;
     padding: 1px 8px;
@@ -160,22 +148,39 @@ THINKING_BOX_CSS = """
     vertical-align: middle;
 }
 
-.badge-hit    { background: #064e3b; color: #6ee7b7; }   /* emerald */
-.badge-miss   { background: #450a0a; color: #fca5a5; }   /* red */
-.badge-rag    { background: #1e1b4b; color: #a5b4fc; }   /* indigo */
-.badge-chat   { background: #052e16; color: #86efac; }   /* green */
-.badge-follow { background: #1c1917; color: #fbbf24; }   /* amber */
-.badge-cot    { background: #2e1065; color: #c084fc; }   /* purple */
+.badge-hit    { background: #064e3b; color: #6ee7b7; }
+.badge-miss   { background: #450a0a; color: #fca5a5; }
+.badge-rag    { background: #1e1b4b; color: #a5b4fc; }
+.badge-chat   { background: #052e16; color: #86efac; }
+.badge-follow { background: #1c1917; color: #fbbf24; }
+.badge-cot    { background: #2e1065; color: #c084fc; }
 
-/* ============================================================
-   Animação de entrada das etapas
-   ============================================================ */
 @keyframes fadeSlideIn {
     from { opacity: 0; transform: translateY(-3px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 </style>
 """
+
+
+# ---------------------------------------------------------------------------
+# Injeção de CSS — chamada a cada ciclo em app.py/main()
+# ---------------------------------------------------------------------------
+
+def inject_trace_css() -> None:
+    """
+    Injeta o CSS do pipeline trace no DOM.
+
+    Deve ser chamada no início de main() em app.py, a cada ciclo de
+    renderização do Streamlit. Não usa session_state flag — a re-injeção
+    a cada ciclo é necessária porque o Streamlit descarta o DOM entre
+    re-execuções, incluindo qualquer <style> injetado anteriormente.
+
+    Isso garante que os traces históricos (HTML estático salvo em
+    session_state.chat_history_traces) mantenham o estilo correto
+    quando re-renderizados por render_chat_history().
+    """
+    st.markdown(THINKING_BOX_CSS, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -200,22 +205,7 @@ def _step_html(icon: str, label: str, detail: str = "") -> str:
 
 
 def _cot_block_html(think_content: str, think_tokens: int, think_lines: int) -> str:
-    """
-    Monta o HTML do bloco <think> colapsável.
-
-    Exibe o raciocínio interno do modelo (CoT) numa caixa roxa
-    separada, indicando claramente que é pensamento interno, não
-    parte da resposta ao usuário.
-
-    Args:
-        think_content: Texto do raciocínio interno.
-        think_tokens:  Estimativa de tokens do bloco.
-        think_lines:   Número de linhas do bloco.
-
-    Returns:
-        str: HTML do bloco colapsável.
-    """
-    # Escapa HTML básico para evitar injeção
+    """Monta o HTML do bloco <think> colapsável."""
     safe = (
         think_content
         .replace("&", "&amp;")
@@ -246,13 +236,12 @@ class PipelineTrace:
 
     Usa st.empty() para atualizar o placeholder a cada etapa,
     criando o efeito de "pensamento ao vivo" em tempo real.
+
+    O CSS não é injetado aqui — é responsabilidade de inject_trace_css()
+    chamada em app.py/main() antes de qualquer renderização.
     """
 
     def __init__(self):
-        if "thinking_css_injected" not in st.session_state:
-            st.markdown(THINKING_BOX_CSS, unsafe_allow_html=True)
-            st.session_state.thinking_css_injected = True
-
         self._placeholder = st.empty()
         self._steps_html  = []
         self._start_time  = time.perf_counter()
@@ -268,17 +257,6 @@ class PipelineTrace:
         Executa uma etapa e atualiza o trace em tempo real.
 
         Mostra ⏳ durante execução → ✅ com detalhe ao concluir.
-
-        Args:
-            label:     Texto da etapa.
-            icon:      Emoji da etapa.
-            fn:        Callable que executa a lógica da etapa.
-            detail_fn: Callable(resultado) → str HTML de detalhe.
-            skip_if:   Se True, pula a etapa mostrando skip_msg.
-            skip_msg:  Mensagem quando etapa é pulada.
-
-        Returns:
-            Resultado de fn(), ou None se pulada.
         """
         if not self._active:
             return fn() if not skip_if else None
@@ -300,23 +278,20 @@ class PipelineTrace:
 
     def add_cot_block(self, think_result) -> None:
         """
-        Adiciona o bloco de raciocínio interno (<think>) ao trace.
-
-        Deve ser chamado após o LLM responder, passando o ThinkResult
-        retornado por core.think_parser.parse_think().
+        Adiciona o bloco <think> do modelo ao trace.
 
         Args:
             think_result: ThinkResult de core.think_parser.
         """
         if not think_result.used_cot or not think_result.think_content:
             return
-
-        cot_html = _cot_block_html(
-            think_result.think_content,
-            think_result.think_tokens,
-            think_result.think_lines,
+        self._steps_html.append(
+            _cot_block_html(
+                think_result.think_content,
+                think_result.think_tokens,
+                think_result.think_lines,
+            )
         )
-        self._steps_html.append(cot_html)
         self._render()
 
     def add_divider(self) -> None:
@@ -345,12 +320,11 @@ class PipelineTrace:
         """
         Retorna o HTML completo do trace para persistência no session_state.
 
-        Chamado após finish() para salvar o estado final do trace.
-        Usado por render_chat_history() para re-renderizar traces de
-        interações anteriores sem precisar re-executar o pipeline.
+        O HTML inclui APENAS a estrutura da caixa, sem o bloco <style>.
+        O CSS é garantido por inject_trace_css() chamada a cada ciclo.
 
         Returns:
-            str: HTML completo da caixa de pensamento.
+            str: HTML da caixa de pensamento sem o bloco <style>.
         """
         steps_joined = "\n".join(self._steps_html)
         return (
@@ -373,17 +347,7 @@ class PipelineTrace:
 
     def _render(self) -> None:
         """Atualiza o placeholder com o HTML acumulado."""
-        steps_joined = "\n".join(self._steps_html)
-        html = (
-            f'<div class="thinking-box">'
-            f'  <div class="thinking-header">'
-            f'    <span>⚙️</span>'
-            f'    <span>Processamento do Agente</span>'
-            f'  </div>'
-            f'  {steps_joined}'
-            f'</div>'
-        )
-        self._placeholder.markdown(html, unsafe_allow_html=True)
+        self._placeholder.markdown(self.get_html(), unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------

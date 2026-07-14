@@ -43,13 +43,6 @@ def render_chat_history(chat_history: list) -> None:
     traces     = st.session_state.get("chat_history_traces", [])
     show_trace = st.session_state.get("show_pipeline_trace", True)
 
-    # Injeta o CSS do trace uma vez (necessário para os traces históricos)
-    if traces and show_trace:
-        from ui.pipeline_trace import THINKING_BOX_CSS
-        if "thinking_css_injected" not in st.session_state:
-            st.markdown(THINKING_BOX_CSS, unsafe_allow_html=True)
-            st.session_state.thinking_css_injected = True
-
     with st.container(height=CHAT_CONTAINER_HEIGHT, border=False):
         # Índice de traces: cada par (HumanMessage, AIMessage) consome 1 trace
         trace_idx = 0

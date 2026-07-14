@@ -88,7 +88,33 @@ def render_sidebar(available_providers: list | None = None) -> dict:
 
         st.divider()
 
-        # ── 3. Reranker ─────────────────────────────────────────────────────
+        # ── 3. Classificador de Intenção ────────────────────────────────────
+        st.markdown("#### 🎯 Classificador de Intenção")
+        st.caption(
+            "Modelo dedicado para classificar cada mensagem antes de acionar o RAG. "
+            "Use um modelo leve para economizar tokens do modelo principal."
+        )
+
+        classifier_provider = st.selectbox(
+            "Provedor do classificador",
+            options=["hf_serverless", "hf_hub", "openai", "groq"],
+            format_func=lambda k: PROVIDER_LABELS.get(k, k),
+            index=0,   # hf_serverless como padrão (gratuito)
+            help=(
+                "HuggingFace Serverless é recomendado — gratuito e suficiente "
+                "para classificação de intenção."
+            ),
+            key="classifier_provider_select",
+        )
+
+        from core.models import CLASSIFIER_MODELS
+        classifier_model_default = CLASSIFIER_MODELS.get(
+            classifier_provider, "Qwen/Qwen2.5-3B-Instruct"
+        )
+        st.markdown(
+            f"Modelo: `{classifier_model_default}`",
+            help="Modelo selecionado automaticamente para o provedor escolhido.",
+        )
         st.markdown("#### 🔀 Reranker")
         st.caption(
             "Controla como o cross-encoder seleciona os chunks "
@@ -157,12 +183,13 @@ def render_sidebar(available_providers: list | None = None) -> dict:
         )
 
     return {
-        "uploads":            uploads,
-        "provider":           provider,
-        "model":              model,
-        "temperature":        temperature,
-        "reranker_method":    reranker_method,
-        "reranker_max_k":     reranker_max_k,
-        "reranker_min_score": reranker_min_score,
-        "show_pipeline_trace": show_trace,
+        "uploads":              uploads,
+        "provider":             provider,
+        "model":                model,
+        "temperature":          temperature,
+        "classifier_provider":  classifier_provider,
+        "reranker_method":      reranker_method,
+        "reranker_max_k":       reranker_max_k,
+        "reranker_min_score":   reranker_min_score,
+        "show_pipeline_trace":  show_trace,
     }

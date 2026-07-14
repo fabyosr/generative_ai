@@ -20,6 +20,7 @@ Padrão de projeto:
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_openai import ChatOpenAI
 from langchain_groq import ChatGroq
+from langchain_community.llms import HuggingFaceHub
 
 from core.secrets import get_api_key
 
@@ -30,12 +31,20 @@ from core.secrets import get_api_key
 
 AVAILABLE_MODELS = {
     "hf_hub": [
-        # Modelos validados com HuggingFace Inference Providers (provider="auto")
-        # Apenas modelos chat-compatible e disponíveis em julho/2026
+        # Via Inference Providers (provider="auto") — crédito mensal
         "deepseek-ai/DeepSeek-R1-0528",       # 671B MoE, CoT explícito (<think>)
-        "meta-llama/Llama-3.1-8B-Instruct",   # leve, rápido, chat-compatible
-        "Qwen/Qwen2.5-72B-Instruct",           # 72B, multilíngue, chat-compatible
-        "Qwen/Qwen2.5-7B-Instruct",            # 7B, mais rápido, chat-compatible
+        "meta-llama/Llama-3.1-8B-Instruct",
+        "Qwen/Qwen2.5-72B-Instruct",
+        "Qwen/Qwen2.5-7B-Instruct",
+    ],
+    "hf_serverless": [
+        # Via Serverless Inference API — rate limit por hora, sem crédito mensal
+        # Modelos ≤10B validados como chat-compatible no Serverless (julho/2026)
+        "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "Qwen/Qwen2.5-7B-Instruct",
+        "google/gemma-2-9b-it",
+        "mistralai/Mistral-7B-Instruct-v0.3",
+        "Qwen/Qwen2.5-3B-Instruct",           # mais leve — bom para o classificador
     ],
     "openai": [
         "gpt-4o-mini",
@@ -43,19 +52,26 @@ AVAILABLE_MODELS = {
         "gpt-3.5-turbo",
     ],
     "groq": [
-        # Modelos de produção confirmados ativos em julho/2026
-        # Fonte: https://console.groq.com/docs/models
-        "openai/gpt-oss-120b",                        # 120B, 500 t/s, 131k ctx
-        "openai/gpt-oss-20b",                         # 20B, rápido, 131k ctx
-        "meta-llama/llama-4-scout-17b-16e-instruct",  # MoE, multimodal, 131k ctx
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
+        "meta-llama/llama-4-scout-17b-16e-instruct",
     ],
 }
 
-# Rótulos amigáveis exibidos na sidebar
+# Modelos disponíveis para o classificador de intenção (leves, sem custo alto)
+# Independentes do modelo principal selecionado pelo usuário
+CLASSIFIER_MODELS = {
+    "hf_serverless": "Qwen/Qwen2.5-3B-Instruct",      # padrão — leve e gratuito
+    "hf_hub":        "Qwen/Qwen2.5-7B-Instruct",
+    "openai":        "gpt-4o-mini",                     # mais barato da OpenAI
+    "groq":          "openai/gpt-oss-20b",              # mais rápido do Groq
+}
+
 PROVIDER_LABELS = {
-    "hf_hub": "🤗 HuggingFace Hub",
-    "openai": "🟢 OpenAI",
-    "groq":   "⚡ Groq",
+    "hf_hub":        "🤗 HuggingFace Providers",
+    "hf_serverless": "🆓 HuggingFace Serverless",
+    "openai":        "🟢 OpenAI",
+    "groq":          "⚡ Groq",
 }
 
 
@@ -107,7 +123,29 @@ MODEL_CATALOG: dict[str, dict] = {
         "tier":           "free+paid",
     },
 
-    # ── HuggingFace Hub ───────────────────────────────────────────────────
+    # ── HuggingFace Serverless ────────────────────────────────────────────
+    # Rate limit por hora (não crédito mensal). Modelos ≤10B parâmetros.
+    # Preços: gratuito até o rate limit; PRO $9/mês aumenta os limites.
+    "meta-llama/Meta-Llama-3.1-8B-Instruct": {
+        "context_window": 131_072,
+        "price":          (0.0, 0.0),           # gratuito no free tier
+        "tier":           "free",
+    },
+    "google/gemma-2-9b-it": {
+        "context_window": 8_192,
+        "price":          (0.0, 0.0),
+        "tier":           "free",
+    },
+    "mistralai/Mistral-7B-Instruct-v0.3": {
+        "context_window": 32_768,
+        "price":          (0.0, 0.0),
+        "tier":           "free",
+    },
+    "Qwen/Qwen2.5-3B-Instruct": {
+        "context_window": 32_768,
+        "price":          (0.0, 0.0),
+        "tier":           "free",
+    },
     "deepseek-ai/DeepSeek-R1-0528": {
         "context_window": 163_840,
         "price":          (0.000300, 0.000300),
@@ -132,9 +170,10 @@ MODEL_CATALOG: dict[str, dict] = {
 
 # Fallbacks quando o modelo não estiver no catálogo
 _PROVIDER_DEFAULTS: dict[str, dict] = {
-    "openai": {"context_window": 16_385,  "price": (0.000500, 0.001500), "tier": "paid"},
-    "groq":   {"context_window": 131_072, "price": (0.000075, 0.000300), "tier": "free+paid"},
-    "hf_hub": {"context_window": 32_768,  "price": (0.000100, 0.000100), "tier": "paid"},
+    "openai":        {"context_window": 16_385,  "price": (0.000500, 0.001500), "tier": "paid"},
+    "groq":          {"context_window": 131_072, "price": (0.000075, 0.000300), "tier": "free+paid"},
+    "hf_hub":        {"context_window": 32_768,  "price": (0.000100, 0.000100), "tier": "paid"},
+    "hf_serverless": {"context_window": 8_192,   "price": (0.0,       0.0),     "tier": "free"},
 }
 
 
@@ -306,12 +345,51 @@ def _model_groq(model: str, temperature: float) -> ChatGroq:
 # Ponto único de entrada — Factory Method
 # ---------------------------------------------------------------------------
 
+def _model_hf_serverless(model: str, temperature: float) -> ChatHuggingFace:
+    """
+    Instancia um modelo via HuggingFace Serverless Inference API.
+
+    Diferença em relação ao hf_hub (Inference Providers):
+        - hf_hub:        usa provider="auto" → roteia para Together/Nebius/etc.
+                         consome crédito mensal esgotável.
+        - hf_serverless: usa api-inference.huggingface.co diretamente →
+                         rate limit por hora (não crédito mensal).
+                         Gratuito no free tier para modelos ≤10B parâmetros.
+
+    Usa HuggingFaceEndpoint sem provider="auto" e apontando para o
+    endpoint serverless, que é o comportamento default antes do HF
+    introduzir os Inference Providers.
+
+    Args:
+        model:       ID do modelo (deve ser ≤10B e chat-compatible).
+        temperature: Temperatura de geração.
+
+    Returns:
+        ChatHuggingFace: LLM com interface de chat.
+    """
+    token = _validate_key(
+        "HUGGINGFACEHUB_API_TOKEN",
+        "HuggingFace Serverless",
+        "https://huggingface.co/settings/tokens",
+    )
+    endpoint = HuggingFaceEndpoint(
+        repo_id=model,
+        temperature=temperature,
+        return_full_text=False,
+        max_new_tokens=1024,
+        task="text-generation",
+        # Sem provider="auto" → usa Serverless Inference API diretamente
+        huggingfacehub_api_token=token,
+    )
+    return ChatHuggingFace(llm=endpoint)
+
+
 def get_model(provider: str, model: str, temperature: float = 0.1):
     """
     Fábrica de LLMs: instancia e retorna o modelo correto dado um provedor.
 
     Args:
-        provider:    Chave do provedor ("hf_hub" | "openai" | "groq").
+        provider:    "hf_hub" | "hf_serverless" | "openai" | "groq"
         model:       Nome/ID do modelo dentro do provedor.
         temperature: Temperatura de geração (padrão 0.1).
 
@@ -322,9 +400,10 @@ def get_model(provider: str, model: str, temperature: float = 0.1):
         ValueError: Se o provedor informado não for suportado.
     """
     factory = {
-        "hf_hub": _model_hf_hub,
-        "openai": _model_openai,
-        "groq":   _model_groq,
+        "hf_hub":        _model_hf_hub,
+        "hf_serverless": _model_hf_serverless,
+        "openai":        _model_openai,
+        "groq":          _model_groq,
     }
 
     if provider not in factory:
@@ -334,3 +413,36 @@ def get_model(provider: str, model: str, temperature: float = 0.1):
         )
 
     return factory[provider](model, temperature)
+
+
+def get_classifier_model(main_provider: str, classifier_provider: str):
+    """
+    Instancia o modelo dedicado para o classificador de intenção.
+
+    O classificador usa um modelo independente do modelo principal,
+    geralmente mais leve e barato, para não consumir tokens do modelo
+    principal em cada classificação.
+
+    Hierarquia de seleção:
+        1. Usa o provider selecionado pelo usuário na sidebar para o classificador
+        2. Seleciona o modelo padrão do CLASSIFIER_MODELS para esse provider
+        3. Se o provider do classificador não tiver chave configurada,
+           faz fallback para hf_serverless (gratuito)
+
+    Args:
+        main_provider:       Provedor do modelo principal (para fallback).
+        classifier_provider: Provedor selecionado para o classificador.
+
+    Returns:
+        BaseChatModel: LLM leve para classificação de intenção.
+    """
+    model = CLASSIFIER_MODELS.get(
+        classifier_provider,
+        CLASSIFIER_MODELS.get(main_provider, "Qwen/Qwen2.5-3B-Instruct")
+    )
+
+    try:
+        return get_model(classifier_provider, model, temperature=0.0)
+    except ValueError:
+        # Fallback para serverless gratuito se o provider falhar
+        return get_model("hf_serverless", "Qwen/Qwen2.5-3B-Instruct", temperature=0.0)

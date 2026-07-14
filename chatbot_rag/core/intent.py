@@ -104,65 +104,89 @@ _CLASSIFIER_SYSTEM = """Você é um classificador de intenção para um chatbot 
 
 Classifique a mensagem em UMA das categorias:
 
-RAG_QUERY → qualquer pergunta ou interesse no conteúdo dos documentos enviados.
+RAG_QUERY → pergunta ou solicitação sobre o conteúdo dos documentos carregados.
   Exemplos: "qual o prazo?", "valor do contrato", "quem é o responsável",
-            "me fale sobre X", "o que diz sobre Y", "como funciona Z",
-            "qual a política de reembolso", "me explique sobre isso"
+            "me fale sobre X", "o que diz sobre Y", "como funciona Z"
 
-FOLLOWUP → pedido de esclarecimento ou continuação da resposta ANTERIOR do assistente.
-  Exemplos: "pode elaborar?", "explica melhor", "dê um exemplo disso", "repete"
+FOLLOWUP → pedido de esclarecimento ou continuação da resposta ANTERIOR.
+  Exemplos: "pode elaborar?", "explica melhor", "dê um exemplo disso"
 
-CHITCHAT → saudação, agradecimento ou conversa completamente fora do contexto de documentos.
+CHITCHAT → saudação, agradecimento ou conversa completamente fora do contexto.
   Exemplos: "oi", "obrigado", "tchau", "bom dia"
 
 REGRA CRÍTICA: em caso de dúvida, sempre responda RAG_QUERY.
-Queries curtas sobre temas específicos (preço, prazo, nome, data) são RAG_QUERY.
+Queries curtas sobre temas específicos (preço, prazo, nome, data, cláusula)
+são RAG_QUERY, mesmo com poucas palavras.
 
 Responda APENAS com uma palavra: RAG_QUERY, FOLLOWUP ou CHITCHAT."""
 
 
-def _llm_classify(message: str, chat_history: list, llm) -> IntentResult:
+def _build_classifier_prompt(doc_knowledge: str = "") -> str:
     """
-    Classifica via LLM com fallback seguro para RAG_QUERY.
+    Constrói o system prompt do classificador com contexto dos documentos.
 
-    O fallback é RAG_QUERY (não chitchat) para garantir que perguntas
-    sobre documentos nunca sejam descartadas por erro do classificador.
+    Se doc_knowledge for fornecido (resumo dos temas dos documentos),
+    adiciona uma instrução sobre quais assuntos pertencem à base de
+    conhecimento — o classificador fica mais preciso ao saber o domínio.
+
+    Args:
+        doc_knowledge: Saída de format_for_classifier() (pode ser "").
+
+    Returns:
+        str: System prompt completo para o classificador.
+    """
+    return _CLASSIFIER_SYSTEM + doc_knowledge
+
+
+def _llm_classify(
+    message:        str,
+    chat_history:   list,
+    llm,
+    doc_knowledge:  str = "",
+) -> IntentResult:
+    """
+    Classifica via LLM com system prompt contextualizado pelos documentos.
+
+    Args:
+        message:       Texto do usuário.
+        chat_history:  Histórico recente da conversa.
+        llm:           Instância de LLM (pode ser o classificador dedicado).
+        doc_knowledge: Contexto dos temas dos documentos (opcional).
+
+    Returns:
+        IntentResult com method="llm".
     """
     from langchain_core.messages import SystemMessage
 
     t0     = time.perf_counter()
     recent = chat_history[-4:] if len(chat_history) >= 4 else chat_history
 
+    system_prompt = _build_classifier_prompt(doc_knowledge)
+
     messages = [
-        SystemMessage(content=_CLASSIFIER_SYSTEM),
+        SystemMessage(content=system_prompt),
         *recent,
         HumanMessage(content=f'Classifique: "{message}"'),
     ]
 
     raw    = ""
-    intent = IntentType.RAG_QUERY   # fallback conservador — nunca perde uma query RAG
+    intent = IntentType.RAG_QUERY
 
     try:
         response = llm.invoke(messages)
         raw      = response.content.strip().upper()
 
         if "CHITCHAT" in raw and "RAG" not in raw:
-            intent     = IntentType.CHITCHAT
-            confidence = 0.9
+            intent, confidence = IntentType.CHITCHAT,  0.9
         elif "FOLLOWUP" in raw and "RAG" not in raw:
-            intent     = IntentType.FOLLOWUP
-            confidence = 0.9
-        elif "RAG_QUERY" in raw or "RAG" in raw:
-            intent     = IntentType.RAG_QUERY
-            confidence = 0.9
+            intent, confidence = IntentType.FOLLOWUP,  0.9
+        elif "RAG" in raw:
+            intent, confidence = IntentType.RAG_QUERY, 0.9
         else:
-            # Resposta inesperada → fallback conservador
-            intent     = IntentType.RAG_QUERY
-            confidence = 0.6
+            intent, confidence = IntentType.RAG_QUERY, 0.6
 
     except Exception:
-        intent     = IntentType.RAG_QUERY
-        confidence = 0.6
+        intent, confidence = IntentType.RAG_QUERY, 0.6
 
     return IntentResult(
         intent         = intent,
@@ -173,18 +197,39 @@ def _llm_classify(message: str, chat_history: list, llm) -> IntentResult:
     )
 
 
-def classify_intent(message: str, chat_history: list, llm) -> IntentResult:
+def classify_intent(
+    message:        str,
+    chat_history:   list,
+    llm,
+    classifier_llm  = None,
+    doc_knowledge:  str = "",
+) -> IntentResult:
     """
     Classifica a intenção em duas camadas.
 
-    Camada 1 (heurística): apenas padrões inequívocos — saudações e
-    agradecimentos exatos. Qualquer dúvida vai para a camada 2.
+    Parâmetros novos:
+        classifier_llm: Modelo dedicado para classificação — independente
+                        do modelo principal. Se None, usa o llm principal.
+                        Recomendado: modelo leve (Qwen2.5-3B, gpt-4o-mini).
 
-    Camada 2 (LLM): prompt com exemplos e regra explícita de que dúvida
-    = RAG_QUERY. Fallback de erro também = RAG_QUERY.
+        doc_knowledge:  Resumo dos temas dos documentos gerado por
+                        doc_summary.format_for_classifier(). Injetado no
+                        system prompt do classificador para que ele saiba
+                        quais assuntos estão na base de conhecimento.
+
+    Args:
+        message:        Texto do usuário.
+        chat_history:   Lista de mensagens da sessão.
+        llm:            Modelo principal (fallback se classifier_llm=None).
+        classifier_llm: Modelo leve dedicado ao classificador (opcional).
+        doc_knowledge:  Contexto dos documentos para o classificador.
+
+    Returns:
+        IntentResult com intent, method, confidence, latency_ms.
     """
     t0 = time.perf_counter()
 
+    # Camada 1: heurística — apenas padrões inequívocos
     heuristic = _heuristic_classify(message.strip())
     if heuristic is not None:
         return IntentResult(
@@ -194,4 +239,6 @@ def classify_intent(message: str, chat_history: list, llm) -> IntentResult:
             latency_ms = round((time.perf_counter() - t0) * 1000, 1),
         )
 
-    return _llm_classify(message, chat_history, llm)
+    # Camada 2: LLM — usa classificador dedicado se disponível
+    active_llm = classifier_llm if classifier_llm is not None else llm
+    return _llm_classify(message, chat_history, active_llm, doc_knowledge)
