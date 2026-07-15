@@ -48,51 +48,93 @@ class IntentResult:
 # Heurística RESTRITA — apenas padrões inequivocamente não-RAG
 # ---------------------------------------------------------------------------
 
-# Saudações puras — matches exatos, sem espaço para ambiguidade
-_GREETINGS = re.compile(
-    r"^(oi|olá|ola|oii|oiii|hey|hi|hello|e aí|eai|oi tudo bem"
-    r"|bom dia|boa tarde|boa noite|good morning|good afternoon)[!?.,\s]*$",
+# Token de abertura de saudação (início da frase)
+_GREETING_OPEN = re.compile(
+    r"^(oi|olá|ola|oii|oiii|hey|hi|hello|e aí|eai"
+    r"|bom dia|boa tarde|boa noite|good morning|good afternoon|good evening)",
+    re.IGNORECASE,
+)
+
+# Conteúdo puramente social — o que pode vir DEPOIS de uma saudação
+_SOCIAL_TAIL = re.compile(
+    r"^[,!\s]*(tudo bem|tudo bom|tudo certo|td bem|td bom|blz|beleza"
+    r"|como vai|como você está|como vc está|como tá|como ta|como estas"
+    r"|how are you|how's it going|all good|tudo)[?!.,\s]*$",
+    re.IGNORECASE,
+)
+
+# Saudações simples completas
+_GREETINGS_EXACT = re.compile(
+    r"^(oi|olá|ola|oii|oiii|hey|hi|hello|e aí|eai"
+    r"|bom dia|boa tarde|boa noite|good morning|good afternoon|good evening"
+    r"|tudo bem|tudo bom|tudo certo|td bem|blz|beleza)[!?.,\s]*$",
     re.IGNORECASE,
 )
 
 # Agradecimentos e encerramentos puros
 _ACKNOWLEDGEMENTS = re.compile(
-    r"^(obrigad[ao]|obg|valeu|vlw|thanks|thank you"
-    r"|tchau|até logo|até mais|ate logo|bye|até|flw|falou)[!?.,\s]*$",
+    r"^(obrigad[ao]|obg|valeu|vlw|thanks|thank you|muito obrigad[ao]"
+    r"|tchau|até logo|até mais|ate logo|até a próxima|bye|até|flw|falou"
+    r"|entendido|ok|certo|perfeito|ótimo|otimo|show|legal)[!?.,\s]*$",
     re.IGNORECASE,
 )
 
-# Followup explícito — frases que só fazem sentido referindo-se à resposta anterior
+# Followup explícito
 _FOLLOWUP = re.compile(
     r"^(pode (repetir|explicar melhor|detalhar|elaborar|continuar|exemplificar)"
-    r"|explica melhor|mais detalhes|pode dar um exemplo|dê um exemplo"
-    r"|não entendi|como assim|pode reformular|em outras palavras"
-    r"|repete|repita)[?!.\s]*$",
+    r"|explica melhor|mais detalhes|pode dar um exemplo|dê um exemplo|da um exemplo"
+    r"|não entendi|nao entendi|como assim|pode reformular|em outras palavras"
+    r"|repete|repita|continua|continue)[?!.\s]*$",
     re.IGNORECASE,
 )
 
 
 def _heuristic_classify(message: str) -> IntentType | None:
     """
-    Classifica apenas padrões inequívocos. Retorna None para qualquer dúvida.
+    Classifica padrões inequívocos sem chamar LLM.
 
-    NUNCA classifica como chitchat baseado apenas no comprimento da mensagem.
-    Queries curtas como "prazo", "valor total", "quem assinou" são perguntas
-    legítimas sobre documentos e devem ir para o LLM classificar.
+    Lógica para saudações compostas como "oi como vai?":
+        1. Detecta se inicia com token de saudação
+        2. Verifica se o restante é conteúdo puramente social
+        3. Se sim → CHITCHAT; se não → None (LLM decide)
+
+    Exemplos:
+        "oi"             → CHITCHAT (saudação exata)
+        "oi como vai?"   → CHITCHAT (saudação + social)
+        "oi tudo bem?"   → CHITCHAT (saudação + social)
+        "oi qual o prazo?" → None  (saudação + conteúdo informacional → LLM)
+        "prazo"          → None    (conteúdo ambíguo → LLM)
+        "obrigado"       → CHITCHAT
+        "pode repetir?"  → FOLLOWUP
     """
     stripped = message.strip()
 
-    # Só considera saudação se bater exatamente no padrão completo
-    if _GREETINGS.fullmatch(stripped):
+    # 1. Saudação ou frase social exata
+    if _GREETINGS_EXACT.fullmatch(stripped):
         return IntentType.CHITCHAT
 
+    # 2. Agradecimento ou encerramento
     if _ACKNOWLEDGEMENTS.fullmatch(stripped):
         return IntentType.CHITCHAT
 
+    # 3. Saudação composta: inicia com token de saudação
+    m = _GREETING_OPEN.match(stripped)
+    if m:
+        tail = stripped[m.end():].strip()
+        if not tail:
+            # Só a saudação, sem mais nada
+            return IntentType.CHITCHAT
+        if _SOCIAL_TAIL.fullmatch(tail):
+            # Saudação + conteúdo puramente social → chitchat
+            return IntentType.CHITCHAT
+        # Saudação + conteúdo informacional → delega ao LLM
+        return None
+
+    # 4. Followup explícito
     if _FOLLOWUP.fullmatch(stripped):
         return IntentType.FOLLOWUP
 
-    # TUDO mais vai para o LLM — incluindo queries curtas e ambíguas
+    # 5. Qualquer outro caso → LLM decide
     return None
 
 

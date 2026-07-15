@@ -95,9 +95,10 @@ def get_available_providers(status: dict[str, bool]) -> list[str]:
         list[str]: Provedores disponíveis (ex: ["openai", "groq"]).
     """
     provider_requirements = {
-        "openai": "OPENAI_API_KEY",
-        "groq":   "GROQ_API_KEY",
-        "hf_hub": "HUGGINGFACEHUB_API_TOKEN",
+        "openai":        "OPENAI_API_KEY",
+        "groq":          "GROQ_API_KEY",
+        "hf_hub":        "HUGGINGFACEHUB_API_TOKEN",
+        "hf_serverless": "HUGGINGFACEHUB_API_TOKEN",  # mesma chave do hf_hub
     }
 
     return [
