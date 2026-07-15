@@ -205,6 +205,8 @@ def _llm_classify(
 
     system_prompt = _build_classifier_prompt(doc_knowledge)
 
+    print(f'\nsystem_prompt => {system_prompt}\n')
+
     messages = [
         SystemMessage(content=system_prompt),
         *recent,
