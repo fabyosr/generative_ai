@@ -284,7 +284,7 @@ def _render_intent_tab(result) -> None:
     if interp:
         st.info(interp, icon="ℹ️")
 
-     with st.expander("📖 System prompt", expanded=False):
+    with st.expander("📖 System prompt", expanded=False):
         st.markdown(f"**System promtp**")
 
     # Debug: output bruto do LLM classificador
