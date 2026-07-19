@@ -1,2 +1,2 @@
 streamlit
-streamlit-audio-recorder
+st-audio-recorder
