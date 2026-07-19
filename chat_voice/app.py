@@ -1,24 +1,45 @@
 import streamlit as st
 from faster_whisper import WhisperModel
-from kokoro import KPipeline
+from kokoro import KPipeline, KModel
 import soundfile as sf
 import io
 import os
 
-# 1. Mantemos o cache para o Whisper porque ele funciona perfeitamente com o Streamlit
+# --- PASSO A PASSO DA RESOLUÇÃO ---
+
+# 1. Carregamento do Whisper (Funciona bem isolado com cache)
 @st.cache_resource
 def load_whisper():
     return WhisperModel("tiny", device="cpu", compute_type="int8")
 
-# 2. Inicializador limpo para o Kokoro (Deixamos a biblioteca escolher a CPU por conta própria)
+# 2. RESOLUÇÃO COMPLETA DO BUG DO DEVICE:
+# Criamos o modelo puro fora do pipeline e injetamos o atributo em nível de classe/objeto.
+@st.cache_resource
+def get_clean_kokoro_model():
+    # Instancia o modelo puro do Kokoro
+    model = KModel()
+    
+    # Injetamos explicitamente a propriedade "device" diretamente na estrutura base 
+    # do objeto para saciar a busca interna exigida pelas threads do Streamlit
+    object.__setattr__(model, 'device', 'cpu') 
+    
+    # Colocamos o modelo em modo de avaliação (padrão PyTorch para inferência)
+    model.eval()
+    return model
+
+# 3. Construção do Pipeline passando o modelo blindado acima
 def get_kokoro_pipeline():
-    # Instanciamos o pipeline informando apenas o código do idioma Português ('p')
-    # Sem passar o parâmetro 'device', eliminando o erro de inicialização.
-    return KPipeline(lang_code='p')
+    # Buscamos nossa instância limpa do modelo da CPU
+    core_model = get_clean_kokoro_model()
+    
+    # Inicializamos o pipeline do idioma ('p' para Português) injetando o modelo customizado
+    return KPipeline(lang_code='p', model=core_model)
+
+
+# --- INTERFACE VISUAL DO STREAMLIT ---
 
 st.title("🎙️ Chatbot de Voz Otimizado (Faster-Whisper + Kokoro)")
 
-# --- CONFIGURAÇÃO DE VOZES NA BARRA LATERAL ---
 st.sidebar.header("⚙️ Configurações de Voz")
 
 opcoes_vozes = {
@@ -32,7 +53,7 @@ id_da_voz = opcoes_vozes[voz_selecionada_label]
 
 st.write(f"A IA responderá usando a voz: **{voz_selecionada_label}**")
 
-# --- COMPONENTE DE ÁUDIO NATIVO ---
+# Componente Nativo do Streamlit para Microfone
 audio_file = st.audio_input("Clique no microfone para falar com a IA")
 
 if audio_file is not None:
@@ -51,7 +72,6 @@ if audio_file is not None:
             
             st.success("📝 Você disse:")
             st.write(texto_transcrito)
-            
             st.write("---")
             
             # --- PROCESSO 2: SÍNTESE DE VOZ REALISTA (TTS) ---
@@ -60,10 +80,9 @@ if audio_file is not None:
                 
                 texto_resposta = f"Você acabou de dizer: {texto_transcrito}"
                 
-                # O Kokoro processa o áudio em formato de gerador (generator)
+                # Executa a geração usando a nossa estrutura blindada
                 generator = pipeline(texto_resposta, voice=id_da_voz, speed=1.0, split_pattern=r'\n+')
                 
-                # Coleta e une os pedaços de áudio gerados pela IA
                 for gs, ps, audio in generator:
                     buffer = io.BytesIO()
                     sf.write(buffer, audio, 24000, format='WAV')
