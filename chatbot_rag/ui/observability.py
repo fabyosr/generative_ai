@@ -227,7 +227,7 @@ def _render_rag_tab(m: dict) -> None:
 # Aba 3 — Intenção
 # ---------------------------------------------------------------------------
 
-def _render_intent_tab(result) -> None:
+def _render_intent_tab(result, doc_knowledge: str = "") -> None:
     """Resultado do classificador de intenção (intent router)."""
     _tab_header(
         "Mostra como o sistema classificou a intenção da última mensagem "
