@@ -1,22 +1,23 @@
 import streamlit as st
 from faster_whisper import WhisperModel
 from kokoro import KPipeline
+import torch  # Importamos o PyTorch para gerenciar o hardware corretamente
 import soundfile as sf
 import io
 import os
 
-# 1. Cache para carregar o modelo de Transcrição na CPU
+# 1. Mantemos o cache para o Whisper porque ele funciona perfeitamente com o Streamlit
 @st.cache_resource
 def load_whisper():
     return WhisperModel("tiny", device="cpu", compute_type="int8")
 
-# 2. CACHE CORRIGIDO PARA EVITAR O BUG DO 'KModel'
-@st.cache_resource
-def load_kokoro_pipeline():
-    pipeline = KPipeline(lang_code='p')
-    # Ajuste manual necessário para corrigir o bug de atributo ausente no Streamlit
-    if hasattr(pipeline, 'model') and not hasattr(pipeline.model, 'device'):
-        pipeline.model.device = "cpu"
+# 2. NOVA ABORDAGEM: Inicializador explícito sem cache polimórfico
+def get_kokoro_pipeline():
+    # Forçamos o PyTorch a rodar em CPU antes de criar o pipeline
+    device = "cpu"
+    # Inicializamos o pipeline informando o idioma Português ('p')
+    # O Kokoro carrega os pesos em memória de forma leve na CPU
+    pipeline = KPipeline(lang_code='p', device=device)
     return pipeline
 
 st.title("🎙️ Chatbot de Voz Otimizado (Faster-Whisper + Kokoro)")
@@ -59,7 +60,8 @@ if audio_file is not None:
             
             # --- PROCESSO 2: SÍNTESE DE VOZ REALISTA (TTS) ---
             with st.spinner("🗣️ Kokoro gerando resposta realista em áudio..."):
-                pipeline = load_kokoro_pipeline()
+                # Chamamos a função sem o cache do Streamlit para evitar o erro do "device"
+                pipeline = get_kokoro_pipeline()
                 
                 texto_resposta = f"Você acabou de dizer: {texto_transcrito}"
                 

@@ -3,3 +3,4 @@ faster-whisper
 gtts
 kokoro
 soundfile
+torch
