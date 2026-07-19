@@ -284,8 +284,9 @@ def _render_intent_tab(result) -> None:
     if interp:
         st.info(interp, icon="ℹ️")
 
-    with st.expander("📖 System prompt", expanded=False):
-        st.markdown(f"**System promtp**")
+    if doc_knowledge:
+        with st.expander("📄 Contexto injetado no classificador"):
+            st.markdown(doc_knowledge)
 
     # Debug: output bruto do LLM classificador
     if result.raw_llm_output:
