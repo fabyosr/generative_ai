@@ -1,58 +1,85 @@
 import streamlit as st
 from faster_whisper import WhisperModel
-from gtts import gTTS
+from kokoro import KPipeline
+import soundfile as sf
 import io
 import os
 
-# Configuração e cache do modelo de IA para a CPU da nuvem
+# 1. Cache para carregar o modelo de Transcrição na CPU
 @st.cache_resource
 def load_whisper():
-    # O modelo 'tiny' é o ideal para a nuvem gratuita do Streamlit (consome pouca memória)
     return WhisperModel("tiny", device="cpu", compute_type="int8")
 
-st.title("🎙️ Aplicativo de Voz Completo na Nuvem")
-st.write("Grave sua voz diretamente pelo navegador:")
+# 2. Cache para carregar o Pipeline do Kokoro (Idioma Português 'p')
+@st.cache_resource
+def load_kokoro_pipeline():
+    return KPipeline(lang_code='p') 
 
-# 1. Componente NATIVO de áudio do Streamlit (Substitui o st_audio_recorder)
-audio_file = st.audio_input("Clique no microfone para gravar")
+st.title("🎙️ Chatbot de Voz Otimizado (Faster-Whisper + Kokoro)")
+
+# --- CONFIGURAÇÃO DE VOZES NA BARRA LATERAL ---
+st.sidebar.header("⚙️ Configurações de Voz")
+
+# Mapeamento de vozes em Português (Brasil) disponíveis no Kokoro
+opcoes_vozes = {
+    "Dora (Feminina - PT-BR)": "pf_dora",
+    "Alex (Masculino - PT-BR)": "pm_alex",
+    "Santa / Papai Noel (Masculino - PT-BR)": "pm_santa"
+}
+
+voz_selecionada_label = st.sidebar.selectbox("Escolha a voz da IA:", list(opcoes_vozes.keys()))
+id_da_voz = opcoes_vozes[voz_selecionada_label]
+
+st.write(f"A IA responderá usando a voz: **{voz_selecionada_label}**")
+
+# --- COMPONENTE DE ÁUDIO NATIVO ---
+audio_file = st.audio_input("Clique no microfone para falar com a IA")
 
 if audio_file is not None:
-    # Mostra o player do que foi gravado
+    # Mostra o player do áudio gravado pelo usuário
     st.audio(audio_file)
     
-    # Salva o arquivo temporariamente para a IA ler
-    filename = "temp_audio.wav"
+    filename = "temp_input.wav"
     with open(filename, "wb") as f:
         f.write(audio_file.getbuffer())
         
-    # 2. Transcrição (Speech-to-Text) com Faster-Whisper
-    with st.spinner("🤖 Transcrevendo seu áudio..."):
+    # --- PROCESSO 1: TRANSCRIÇÃO (STT) ---
+    with st.spinner("🤖 Transcrevendo o que você disse..."):
         try:
-            model = load_whisper()
-            segments, info = model.transcribe(filename, beam_size=5, language="pt")
+            whisper_model = load_whisper()
+            segments, info = whisper_model.transcribe(filename, beam_size=5, language="pt")
             texto_transcrito = "".join([segment.text for segment in segments])
             
-            st.success("📝 Texto Detectado:")
+            st.success("📝 Você disse:")
             st.write(texto_transcrito)
             
-            # 3. Exemplo de Resposta (Text-to-Speech) com gTTS
-            # Aqui fazemos a IA "repetir" o que você disse, mas você pode mudar o texto
             st.write("---")
-            st.subheader("🗣️ Resposta em Áudio da IA:")
             
-            texto_resposta = f"Você acabou de dizer: {texto_transcrito}"
-            tts = gTTS(text=texto_resposta, lang="pt", tld="com.br")
-            
-            audio_buffer = io.BytesIO()
-            tts.write_to_fp(audio_buffer)
-            audio_buffer.seek(0)
-            
-            st.audio(audio_buffer, format="audio/mp3", autoplay=True)
-            
+            # --- PROCESSO 2: SÍNTESE DE VOZ REALISTA (TTS) ---
+            with st.spinner("🗣️ Kokoro gerando resposta realista em áudio..."):
+                pipeline = load_kokoro_pipeline()
+                
+                # Texto que a IA vai falar de volta
+                texto_resposta = f"Você acabou de dizer: {texto_transcrito}"
+                
+                # O Kokoro processa o áudio em formato de gerador (generator)
+                generator = pipeline(texto_resposta, voice=id_da_voz, speed=1.0, split_pattern=r'\n+')
+                
+                # Coleta e une os pedaços de áudio gerados pela IA
+                for gs, ps, audio in generator:
+                    buffer = io.BytesIO()
+                    # Salva no buffer a 24000Hz (frequência nativa do Kokoro)
+                    sf.write(buffer, audio, 24000, format='WAV')
+                    buffer.seek(0)
+                    
+                    st.subheader("🔊 Resposta da IA (Autoplay):")
+                    # Toca automaticamente logo após o processamento terminar
+                    st.audio(buffer, format="audio/wav", autoplay=True)
+                    
         except Exception as e:
-            st.error(f"Erro no processamento: {e}")
+            st.error(f"Ocorreu um erro no processamento: {e}")
             
         finally:
-            # Garante que apaga o arquivo temporário da nuvem
+            # Remove o arquivo temporário de áudio por segurança
             if os.path.exists(filename):
                 os.remove(filename)

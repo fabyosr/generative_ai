@@ -1,3 +1,5 @@
 streamlit
 faster-whisper
 gtts
+kokoro
+soundfile
