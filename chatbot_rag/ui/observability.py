@@ -78,7 +78,7 @@ def render_observability_panel(
 
     with tab_ctx:    _render_context_tab(history_metrics, llm_metadata)
     with tab_rag:    _render_rag_tab(rag_metrics)
-    with tab_intent: _render_intent_tab(intent_result)
+    with tab_intent: _render_intent_tab(intent_result, doc_knowledge)
     with tab_cache:  _render_cache_tab(cache_result)
     with tab_rerank: _render_rerank_tab(rerank_result)
     with tab_model:  _render_model_tab(llm_metadata)
@@ -556,7 +556,7 @@ def render_observability_panel(
 
     with tab_ctx:       _render_context_tab(history_metrics, llm_metadata)
     with tab_rag:       _render_rag_tab(rag_metrics)
-    with tab_intent:    _render_intent_tab(intent_result)
+    with tab_intent:    _render_intent_tab(intent_result, doc_knowledge)
     with tab_cache:     _render_cache_tab(cache_result)
     with tab_rerank:    _render_rerank_tab(rerank_result)
     with tab_model:     _render_model_tab(llm_metadata)
