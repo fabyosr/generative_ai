@@ -47,7 +47,7 @@ if audio_file is not None:
             tts.write_to_fp(audio_buffer)
             audio_buffer.seek(0)
             
-            st.audio(audio_buffer, format="audio/mp3")
+            st.audio(audio_buffer, format="audio/mp3", autoplay=True)
             
         except Exception as e:
             st.error(f"Erro no processamento: {e}")
