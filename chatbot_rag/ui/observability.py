@@ -527,6 +527,7 @@ def render_observability_panel(
     llm_metadata:     dict,
     latency:          float,
     intent_result=None,
+    doc_knowledge=None,
     cache_result=None,
     rerank_result=None,
     analytics_result=None,
