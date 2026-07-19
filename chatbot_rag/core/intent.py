@@ -138,31 +138,6 @@ def _heuristic_classify(message: str) -> IntentType | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# Classificador LLM — prompt reforçado com exemplos
-# ---------------------------------------------------------------------------
-
-_CLASSIFIER_SYSTEM = """Você é um classificador de intenção para um chatbot RAG especializado em documentos.
-
-Classifique a mensagem em UMA das categorias:
-
-RAG_QUERY → pergunta ou solicitação sobre o conteúdo dos documentos carregados.
-  Exemplos: "qual o prazo?", "valor do contrato", "quem é o responsável",
-            "me fale sobre X", "o que diz sobre Y", "como funciona Z"
-
-FOLLOWUP → pedido de esclarecimento ou continuação da resposta ANTERIOR.
-  Exemplos: "pode elaborar?", "explica melhor", "dê um exemplo disso"
-
-CHITCHAT → saudação, agradecimento ou conversa completamente fora do contexto.
-  Exemplos: "oi", "obrigado", "tchau", "bom dia"
-
-REGRA CRÍTICA: em caso de dúvida, sempre responda RAG_QUERY.
-Queries curtas sobre temas específicos (preço, prazo, nome, data, cláusula)
-são RAG_QUERY, mesmo com poucas palavras.
-
-Responda APENAS com uma palavra: RAG_QUERY, FOLLOWUP ou CHITCHAT."""
-
-
 def _build_classifier_prompt(doc_knowledge: str = "") -> str:
     """
     Constrói o system prompt do classificador com contexto dos documentos.
@@ -177,7 +152,52 @@ def _build_classifier_prompt(doc_knowledge: str = "") -> str:
     Returns:
         str: System prompt completo para o classificador.
     """
-    return _CLASSIFIER_SYSTEM + doc_knowledge
+
+    # ---------------------------------------------------------------------------
+    # Classificador LLM — prompt reforçado com exemplos
+    # ---------------------------------------------------------------------------
+
+    _CLASSIFIER_SYSTEM = f"""You are an expert Intent Classifier for a RAG-powered chatbot specialized in analyzing and answering questions about uploaded documents.
+
+                            Your job is to analyze the user's message and classify it into **exactly one** of the following three categories:
+
+                            ### RAG_QUERY
+                            Use this when the user is asking for information, facts, summaries, explanations, or performing any action that requires consulting the document collection.
+                            - Questions about content, deadlines, values, responsibilities, clauses, definitions, processes, etc.
+                            - Requests like "what does the document say about...", "summarize...", "extract...", "compare...", "who is responsible for...", "what is the deadline for...".
+                            - Short, specific queries about topics present in the documents (price, deadline, name, date, clause, condition, article, etc.).
+                            - Any query that would benefit from grounding in the uploaded documents.
+
+                            ### FOLLOWUP
+                            Use this when the user is clearly continuing, refining, or asking for clarification on the **previous response** from the assistant.
+                            - Examples: "Can you elaborate?", "Explain that better", "Give me an example", "What about the other contract?", "Go deeper on that point", "Why is that?", "Next item".
+
+                            ### CHITCHAT
+                            Use this for casual conversation, greetings, thanks, farewells, or any message completely unrelated to the documents.
+                            - Examples: "Hi", "Hello", "Thank you", "Goodbye", "Good morning", "How are you?", jokes, small talk.
+
+                            ### CRITICAL RULES
+
+                            1. **Default to RAG_QUERY** in case of any doubt or ambiguity. It is much better to query the documents than to miss relevant information.
+                            2. Short or poorly written messages about specific topics (prices, deadlines, names, clauses, articles, obligations, values, dates, etc.) should almost always be classified as **RAG_QUERY**.
+                            3. If the user is referring to content that is likely present in the documents (even implicitly), classify as **RAG_QUERY**.
+                            4. Only classify as FOLLOWUP if it is very clear that the user is reacting to the assistant’s last message.
+
+                            ### CONTEXT
+                            Below is a summary of the documents currently available in the knowledge base:
+
+                            {doc_knowledge}
+
+                            Use this context to better understand the domain and topics the user might be asking about.
+
+                            ### RESPONSE FORMAT
+                            Respond with **ONLY** one of the following words. Do not add any explanation, punctuation, or extra text:
+
+                            RAG_QUERY  
+                            FOLLOWUP  
+                            CHITCHAT"""
+
+    return _CLASSIFIER_SYSTEM
 
 
 def _llm_classify(
