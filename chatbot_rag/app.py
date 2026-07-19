@@ -703,6 +703,7 @@ def main() -> None:
                 llm_metadata     = st.session_state.last_llm_metadata,
                 latency          = st.session_state.last_latency,
                 intent_result    = st.session_state.last_intent_result,
+                doc_knowledge   = st.session_state.doc_knowledge_summary,
                 cache_result     = st.session_state.last_cache_result,
                 rerank_result    = st.session_state.last_rerank_result,
                 analytics_result = st.session_state.last_analytics,
