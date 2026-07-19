@@ -10,17 +10,20 @@ import os
 def load_whisper():
     return WhisperModel("tiny", device="cpu", compute_type="int8")
 
-# 2. Cache para carregar o Pipeline do Kokoro (Idioma Português 'p')
+# 2. CACHE CORRIGIDO PARA EVITAR O BUG DO 'KModel'
 @st.cache_resource
 def load_kokoro_pipeline():
-    return KPipeline(lang_code='p') 
+    pipeline = KPipeline(lang_code='p')
+    # Ajuste manual necessário para corrigir o bug de atributo ausente no Streamlit
+    if hasattr(pipeline, 'model') and not hasattr(pipeline.model, 'device'):
+        pipeline.model.device = "cpu"
+    return pipeline
 
 st.title("🎙️ Chatbot de Voz Otimizado (Faster-Whisper + Kokoro)")
 
 # --- CONFIGURAÇÃO DE VOZES NA BARRA LATERAL ---
 st.sidebar.header("⚙️ Configurações de Voz")
 
-# Mapeamento de vozes em Português (Brasil) disponíveis no Kokoro
 opcoes_vozes = {
     "Dora (Feminina - PT-BR)": "pf_dora",
     "Alex (Masculino - PT-BR)": "pm_alex",
@@ -36,7 +39,6 @@ st.write(f"A IA responderá usando a voz: **{voz_selecionada_label}**")
 audio_file = st.audio_input("Clique no microfone para falar com a IA")
 
 if audio_file is not None:
-    # Mostra o player do áudio gravado pelo usuário
     st.audio(audio_file)
     
     filename = "temp_input.wav"
@@ -59,7 +61,6 @@ if audio_file is not None:
             with st.spinner("🗣️ Kokoro gerando resposta realista em áudio..."):
                 pipeline = load_kokoro_pipeline()
                 
-                # Texto que a IA vai falar de volta
                 texto_resposta = f"Você acabou de dizer: {texto_transcrito}"
                 
                 # O Kokoro processa o áudio em formato de gerador (generator)
@@ -68,18 +69,15 @@ if audio_file is not None:
                 # Coleta e une os pedaços de áudio gerados pela IA
                 for gs, ps, audio in generator:
                     buffer = io.BytesIO()
-                    # Salva no buffer a 24000Hz (frequência nativa do Kokoro)
                     sf.write(buffer, audio, 24000, format='WAV')
                     buffer.seek(0)
                     
                     st.subheader("🔊 Resposta da IA (Autoplay):")
-                    # Toca automaticamente logo após o processamento terminar
                     st.audio(buffer, format="audio/wav", autoplay=True)
                     
         except Exception as e:
             st.error(f"Ocorreu um erro no processamento: {e}")
             
         finally:
-            # Remove o arquivo temporário de áudio por segurança
             if os.path.exists(filename):
                 os.remove(filename)
