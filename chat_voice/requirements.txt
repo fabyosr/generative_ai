@@ -1,2 +1,3 @@
 streamlit
-st-audio-recorder
+faster-whisper
+gtts
