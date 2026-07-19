@@ -1,20 +1,26 @@
 import streamlit as st
 from faster_whisper import WhisperModel
-from kokoro import KPipeline
+from kokoro import KPipeline, KModel
 import soundfile as sf
+import torch
 import io
 import os
 
-# 1. Carregamento do Whisper
 @st.cache_resource
 def load_whisper():
     return WhisperModel("tiny", device="cpu", compute_type="int8")
 
-# 2. Pipeline do Kokoro — inicializado uma única vez e cacheado
-#    KPipeline cuida internamente do KModel; não precisamos instanciar KModel à mão.
 @st.cache_resource
 def load_kokoro_pipeline():
-    return KPipeline(lang_code='p')   # 'p' = Português Brasileiro
+    # 1. Cria o KModel explicitamente e move para CPU ANTES de qualquer uso
+    #    Isso garante que self.bert existe e self.bert.device retorna 'cpu'
+    #    quando o KPipeline (ou o forward()) chamar self.device internamente
+    kmodel = KModel(repo_id='hexgrad/Kokoro-82M').to('cpu').eval()
+
+    # 2. Injeta o modelo já inicializado no pipeline — sem que o KPipeline
+    #    precise criar um KModel próprio (o que causaria o erro)
+    pipeline = KPipeline(lang_code='p', model=kmodel, device='cpu')
+    return pipeline
 
 # --- INTERFACE ---
 st.title("🎙️ Chatbot de Voz Otimizado (Faster-Whisper + Kokoro)")
@@ -41,8 +47,8 @@ if audio_file is not None:
     with st.spinner("🤖 Transcrevendo o que você disse..."):
         try:
             whisper_model = load_whisper()
-            segments, info = whisper_model.transcribe(filename, beam_size=5, language="pt")
-            texto_transcrito = "".join([segment.text for segment in segments])
+            segments, _ = whisper_model.transcribe(filename, beam_size=5, language="pt")
+            texto_transcrito = "".join([seg.text for seg in segments])
 
             st.success("📝 Você disse:")
             st.write(texto_transcrito)
@@ -63,7 +69,6 @@ if audio_file is not None:
                     buffer = io.BytesIO()
                     sf.write(buffer, audio, 24000, format='WAV')
                     buffer.seek(0)
-
                     st.subheader("🔊 Resposta da IA (Autoplay):")
                     st.audio(buffer, format="audio/wav", autoplay=True)
 
