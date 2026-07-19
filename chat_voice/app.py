@@ -12,13 +12,17 @@ def load_whisper():
 
 @st.cache_resource
 def load_kokoro_pipeline():
-    # 1. Cria o KModel explicitamente e move para CPU ANTES de qualquer uso
-    #    Isso garante que self.bert existe e self.bert.device retorna 'cpu'
-    #    quando o KPipeline (ou o forward()) chamar self.device internamente
-    kmodel = KModel(repo_id='hexgrad/Kokoro-82M').to('cpu').eval()
+    """
+    Inicializa o KModel e KPipeline de forma explícita e segura.
+    O erro real (falha de download HF, falta de bert, etc.) vai aparecer aqui,
+    não mascarado pelo except genérico da UI.
+    """
+    # Força CPU antes de qualquer operação
+    # map_location='cpu' no torch.load (feito internamente pelo KModel) garante
+    # que os pesos não tentam ir para GPU inexistente
+    kmodel = KModel(repo_id='hexgrad/Kokoro-82M').to(torch.device('cpu')).eval()
 
-    # 2. Injeta o modelo já inicializado no pipeline — sem que o KPipeline
-    #    precise criar um KModel próprio (o que causaria o erro)
+    # device='cpu' passado ao KPipeline evita que ele tente detectar CUDA
     pipeline = KPipeline(lang_code='p', model=kmodel, device='cpu')
     return pipeline
 
@@ -35,6 +39,15 @@ voz_selecionada_label = st.sidebar.selectbox("Escolha a voz da IA:", list(opcoes
 id_da_voz = opcoes_vozes[voz_selecionada_label]
 st.write(f"A IA responderá usando a voz: **{voz_selecionada_label}**")
 
+# Carrega o pipeline na inicialização do app (fora do fluxo de áudio)
+# Erros de download/rede aparecem aqui como st.error visível, não mascarados
+try:
+    kokoro_pipeline = load_kokoro_pipeline()
+except Exception as e:
+    st.error(f"❌ Falha ao carregar o modelo Kokoro: {e}")
+    st.info("Verifique se o Streamlit Community Cloud tem acesso ao HuggingFace Hub.")
+    st.stop()
+
 audio_file = st.audio_input("Clique no microfone para falar com a IA")
 
 if audio_file is not None:
@@ -44,37 +57,39 @@ if audio_file is not None:
     with open(filename, "wb") as f:
         f.write(audio_file.getbuffer())
 
-    with st.spinner("🤖 Transcrevendo o que você disse..."):
-        try:
+    try:
+        # --- TRANSCRIÇÃO ---
+        with st.spinner("🤖 Transcrevendo..."):
             whisper_model = load_whisper()
             segments, _ = whisper_model.transcribe(filename, beam_size=5, language="pt")
             texto_transcrito = "".join([seg.text for seg in segments])
 
-            st.success("📝 Você disse:")
-            st.write(texto_transcrito)
-            st.write("---")
+        st.success("📝 Você disse:")
+        st.write(texto_transcrito)
+        st.write("---")
 
-            with st.spinner("🗣️ Kokoro gerando resposta em áudio..."):
-                pipeline = load_kokoro_pipeline()
-                texto_resposta = f"Você acabou de dizer: {texto_transcrito}"
+        # --- SÍNTESE DE VOZ ---
+        with st.spinner("🗣️ Gerando áudio..."):
+            texto_resposta = f"Você acabou de dizer: {texto_transcrito}"
+            generator = kokoro_pipeline(
+                texto_resposta,
+                voice=id_da_voz,
+                speed=1.0,
+                split_pattern=r'\n+'
+            )
+            for gs, ps, audio in generator:
+                buffer = io.BytesIO()
+                sf.write(buffer, audio, 24000, format='WAV')
+                buffer.seek(0)
+                st.subheader("🔊 Resposta da IA:")
+                st.audio(buffer, format="audio/wav", autoplay=True)
 
-                generator = pipeline(
-                    texto_resposta,
-                    voice=id_da_voz,
-                    speed=1.0,
-                    split_pattern=r'\n+'
-                )
+    except Exception as e:
+        # Agora o erro real aparece — não mais mascarado
+        st.error(f"Erro no processamento: {e}")
+        import traceback
+        st.code(traceback.format_exc())  # mostra o traceback completo para diagnóstico
 
-                for gs, ps, audio in generator:
-                    buffer = io.BytesIO()
-                    sf.write(buffer, audio, 24000, format='WAV')
-                    buffer.seek(0)
-                    st.subheader("🔊 Resposta da IA (Autoplay):")
-                    st.audio(buffer, format="audio/wav", autoplay=True)
-
-        except Exception as e:
-            st.error(f"Ocorreu um erro no processamento: {e}")
-
-        finally:
-            if os.path.exists(filename):
-                os.remove(filename)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
