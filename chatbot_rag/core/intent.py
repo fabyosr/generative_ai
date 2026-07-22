@@ -37,7 +37,7 @@ class IntentType(str, Enum):
 
 @dataclass
 class IntentResult:
-    system_prompt   str         None
+    system_prompt   str        = None
     intent:         IntentType
     method:         str        = "heuristic"
     confidence:     float      = 1.0
