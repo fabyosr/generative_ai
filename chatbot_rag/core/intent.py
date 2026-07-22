@@ -37,6 +37,7 @@ class IntentType(str, Enum):
 
 @dataclass
 class IntentResult:
+    system_prompt   str         None
     intent:         IntentType
     method:         str        = "heuristic"
     confidence:     float      = 1.0
@@ -253,6 +254,7 @@ def _llm_classify(
         intent, confidence = IntentType.RAG_QUERY, 0.6
 
     return IntentResult(
+        system_prompt = system_prompt,
         intent         = intent,
         method         = "llm",
         confidence     = confidence,
@@ -305,4 +307,4 @@ def classify_intent(
 
     # Camada 2: LLM — usa classificador dedicado se disponível
     active_llm = classifier_llm if classifier_llm is not None else llm
-    return _llm_classify(message, chat_history, active_llm, doc_knowledge)
+    return _llm_classify(message, chat_history, active_llm, doc_knowledge, system_prompt)
