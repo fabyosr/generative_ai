@@ -286,7 +286,7 @@ def _render_intent_tab(result, doc_knowledge: str = "") -> None:
 
     if doc_knowledge:
         with st.expander("📄 Contexto injetado no classificador"):
-            st.markdown(doc_knowledge)
+            st.markdown(result.system_prompt)
 
     # Debug: output bruto do LLM classificador
     if result.raw_llm_output:
