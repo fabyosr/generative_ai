@@ -106,6 +106,7 @@ class Reranker:
         Lança ImportError descritivo se sentence-transformers não estiver
         instalado, em vez do genérico ModuleNotFoundError.
         """
+        print('reranker................')
         try:
             from sentence_transformers import CrossEncoder
             self._model = CrossEncoder(self._model_name, device=self._device)
@@ -207,6 +208,8 @@ class Reranker:
         top_score   = final_scores[0]  if final_scores else 0.0
         worst_score = final_scores[-1] if final_scores else 0.0
         score_delta = round(top_score - worst_score, 4)
+
+        print('RerankResult....')
 
         return RerankResult(
             docs        = final_docs,
