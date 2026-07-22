@@ -185,7 +185,7 @@ def _build_classifier_prompt(doc_knowledge: str = "") -> str:
                             4. Only classify as FOLLOWUP if it is very clear that the user is reacting to the assistant’s last message.
 
                             ### CONTEXT
-                            Below is a summary of the documents currently available in the knowledge base:
+                            Below is a summary in Brazilian portuguese of the documents currently available in the knowledge base:
 
                             {doc_knowledge}
 
@@ -225,8 +225,6 @@ def _llm_classify(
     recent = chat_history[-4:] if len(chat_history) >= 4 else chat_history
 
     system_prompt = _build_classifier_prompt(doc_knowledge)
-
-    print(f'\nsystem_prompt => {system_prompt}\n')
 
     messages = [
         SystemMessage(content=system_prompt),
