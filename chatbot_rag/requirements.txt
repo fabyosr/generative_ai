@@ -35,6 +35,6 @@ tiktoken>=0.7.0
 python-dotenv>=1.0.0
 
 # --- Utilitários ---
-torch>=2.0.0                     # necessário pelo HuggingFace Embeddings
+# torch>=2.0.0                     # necessário pelo HuggingFace Embeddings
 huggingface-hub>=0.23.0
-torchvision
+# torchvision
