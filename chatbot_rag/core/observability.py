@@ -488,8 +488,9 @@ def _render_performance_tab(latency: float) -> None:
     cpu_uso = psutil.cpu_percent(interval=0.1)
 
     # Exibe na tela do Streamlit
-    st.metric(label="Memória RAM Usada pelo App", value=f"{memoria_uso_mb:.2f} MB")
-    st.metric(label="Uso de CPU", value=f"{cpu_uso:.1f}%")
+    c1, c2 = st.columns([1, 2])
+    with c1: st.metric(label="Memória RAM Usada pelo App", value=f"{memoria_uso_mb:.2f} MB")
+    with c2: st.metric(label="Uso de CPU", value=f"{cpu_uso:.1f}%")
 
 
 # ===========================================================================
