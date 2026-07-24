@@ -1,48 +1,54 @@
 import streamlit as st
 from faster_whisper import WhisperModel
 from kokoro import KPipeline, KModel
+import kokoro.modules as kokoro_modules
 import soundfile as sf
 import torch
 import io
 import os
 
+# ── PATCH 1: device robusto ──────────────────────────────────────────────────
+# KModel.device original faz self.bert.device → pode falhar se bert não tiver
+# parâmetros acessíveis após deserialização pelo cache do Streamlit.
 def _kmodel_device(self):
-    """
-    Substitui a property device original que faz self.bert.device.
-    Usa os parâmetros do próprio KModel -- mais robusto após deserialização
-    pelo cache do Streamlit, onde self.bert pode não ter parâmetros acessíveis.
-    """
     try:
         return next(p.device for p in self.parameters())
     except StopIteration:
         return torch.device('cpu')
 
-# Aplica o patch NA CLASSE antes de qualquer instância ser criada
 KModel.device = property(_kmodel_device)
 
+# ── PATCH 2: CustomAlbert compatível com qualquer versão do transformers ─────
+# transformers < 4.0 e algumas builds retornam tupla em vez de objeto com
+# .last_hidden_state. Este patch trata os dois casos.
+_original_albert_forward = kokoro_modules.CustomAlbert.forward
+
+def _safe_albert_forward(self, *args, **kwargs):
+    outputs = super(kokoro_modules.CustomAlbert, self).forward(*args, **kwargs)
+    # transformers >= 4.0: retorna BaseModelOutputWithPooling (tem .last_hidden_state)
+    if hasattr(outputs, 'last_hidden_state'):
+        return outputs.last_hidden_state
+    # transformers < 4.0 ou return_dict=False: retorna tupla (hidden_state, pooled, ...)
+    if isinstance(outputs, tuple):
+        return outputs[0]
+    return outputs
+
+kokoro_modules.CustomAlbert.forward = _safe_albert_forward
+
+# ── Carregamento dos modelos ──────────────────────────────────────────────────
 @st.cache_resource
 def load_whisper():
     return WhisperModel("tiny", device="cpu", compute_type="int8")
 
 @st.cache_resource
 def load_kmodel():
-    """
-    Cacheia APENAS o KModel (os pesos pesados).
-    O patch acima garante que .device sempre funciona,
-    mesmo após o pickle/unpickle do @st.cache_resource.
-    """
     return KModel(repo_id='hexgrad/Kokoro-82M').to('cpu').eval()
 
 def get_pipeline():
-    """
-    KPipeline é leve (só G2P). Criado a cada chamada usando
-    o KModel já cacheado -- evita qualquer problema de serialização
-    de objetos compostos.
-    """
     kmodel = load_kmodel()
     return KPipeline(lang_code='p', model=kmodel, device='cpu')
 
-# --- INTERFACE ---
+# ── Interface ─────────────────────────────────────────────────────────────────
 st.title("🎙️ Chatbot de Voz Otimizado (Faster-Whisper + Kokoro)")
 st.sidebar.header("⚙️ Configurações de Voz")
 

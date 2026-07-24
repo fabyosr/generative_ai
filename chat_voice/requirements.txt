@@ -1,6 +1,7 @@
-streamlit
-faster-whisper
 gtts
-kokoro
+streamlit
+faster-whisper==1.1.1
+kokoro==0.9.4
+transformers>=4.36.0,<5.0.0
 soundfile
 torch
