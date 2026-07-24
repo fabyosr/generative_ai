@@ -38,7 +38,12 @@ kokoro_modules.CustomAlbert.forward = _safe_albert_forward
 # ── Carregamento dos modelos ──────────────────────────────────────────────────
 @st.cache_resource
 def load_whisper():
-    return WhisperModel("tiny", device="cpu", compute_type="int8")
+    return WhisperModel(
+        "small",          # ← principal melhoria: tiny → small
+        device="cpu",
+        compute_type="int8",
+        cpu_threads=2,    # Streamlit Community tem 2 vCPUs
+    )
 
 @st.cache_resource
 def load_kmodel():
@@ -73,7 +78,23 @@ if audio_file is not None:
     try:
         with st.spinner("🤖 Transcrevendo..."):
             whisper_model = load_whisper()
-            segments, _ = whisper_model.transcribe(filename, beam_size=5, language="pt")
+            segments, info = whisper_model.transcribe(
+                filename,
+                language="pt",
+                beam_size=5,
+                best_of=5,
+                temperature=0.0,                  # decodificação determinística
+                condition_on_previous_text=False, # evita propagação de erros em turnos curtos
+                vad_filter=True,                  # remove silêncio e ruído
+                vad_parameters=dict(
+                    min_silence_duration_ms=500,  # silêncios > 500ms são cortados
+                    threshold=0.5,                # sensibilidade do VAD (0-1)
+                ),
+                initial_prompt=(
+                    "Transcrição em português brasileiro. "
+                    "Conversa com assistente de voz."
+                ),
+            )
             texto_transcrito = "".join([seg.text for seg in segments])
 
         st.success("📝 Você disse:")
