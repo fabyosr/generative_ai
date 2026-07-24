@@ -19,6 +19,7 @@ Responsabilidade:
 =============================================================================
 """
 
+import psutil
 import streamlit as st
 
 CONTEXT_REFERENCE_TOKENS = 4096
@@ -477,6 +478,18 @@ def _render_performance_tab(latency: float) -> None:
             f"Mín: **`{min(history)}s`** · "
             f"Máx: **`{max(history)}s`**"
         )
+
+    # Coleta dados do processo atual do Python
+    processo = psutil.Process()
+    memoria_uso_bytes = processo.memory_info().rss
+    memoria_uso_mb = memoria_uso_bytes / (1024 * 1024)
+
+    # Coleta uso de CPU do sistema/processo
+    cpu_uso = psutil.cpu_percent(interval=0.1)
+
+    # Exibe na tela do Streamlit
+    st.metric(label="Memória RAM Usada pelo App", value=f"{memoria_uso_mb:.2f} MB")
+    st.metric(label="Uso de CPU", value=f"{cpu_uso:.1f}%")
 
 
 # ===========================================================================
