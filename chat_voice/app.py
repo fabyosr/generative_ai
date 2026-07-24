@@ -6,25 +6,41 @@ import torch
 import io
 import os
 
+def _kmodel_device(self):
+    """
+    Substitui a property device original que faz self.bert.device.
+    Usa os parâmetros do próprio KModel -- mais robusto após deserialização
+    pelo cache do Streamlit, onde self.bert pode não ter parâmetros acessíveis.
+    """
+    try:
+        return next(p.device for p in self.parameters())
+    except StopIteration:
+        return torch.device('cpu')
+
+# Aplica o patch NA CLASSE antes de qualquer instância ser criada
+KModel.device = property(_kmodel_device)
+
 @st.cache_resource
 def load_whisper():
     return WhisperModel("tiny", device="cpu", compute_type="int8")
 
 @st.cache_resource
-def load_kokoro_pipeline():
+def load_kmodel():
     """
-    Inicializa o KModel e KPipeline de forma explícita e segura.
-    O erro real (falha de download HF, falta de bert, etc.) vai aparecer aqui,
-    não mascarado pelo except genérico da UI.
+    Cacheia APENAS o KModel (os pesos pesados).
+    O patch acima garante que .device sempre funciona,
+    mesmo após o pickle/unpickle do @st.cache_resource.
     """
-    # Força CPU antes de qualquer operação
-    # map_location='cpu' no torch.load (feito internamente pelo KModel) garante
-    # que os pesos não tentam ir para GPU inexistente
-    kmodel = KModel(repo_id='hexgrad/Kokoro-82M').to(torch.device('cpu')).eval()
+    return KModel(repo_id='hexgrad/Kokoro-82M').to('cpu').eval()
 
-    # device='cpu' passado ao KPipeline evita que ele tente detectar CUDA
-    pipeline = KPipeline(lang_code='p', model=kmodel, device='cpu')
-    return pipeline
+def get_pipeline():
+    """
+    KPipeline é leve (só G2P). Criado a cada chamada usando
+    o KModel já cacheado -- evita qualquer problema de serialização
+    de objetos compostos.
+    """
+    kmodel = load_kmodel()
+    return KPipeline(lang_code='p', model=kmodel, device='cpu')
 
 # --- INTERFACE ---
 st.title("🎙️ Chatbot de Voz Otimizado (Faster-Whisper + Kokoro)")
@@ -39,15 +55,6 @@ voz_selecionada_label = st.sidebar.selectbox("Escolha a voz da IA:", list(opcoes
 id_da_voz = opcoes_vozes[voz_selecionada_label]
 st.write(f"A IA responderá usando a voz: **{voz_selecionada_label}**")
 
-# Carrega o pipeline na inicialização do app (fora do fluxo de áudio)
-# Erros de download/rede aparecem aqui como st.error visível, não mascarados
-try:
-    kokoro_pipeline = load_kokoro_pipeline()
-except Exception as e:
-    st.error(f"❌ Falha ao carregar o modelo Kokoro: {e}")
-    st.info("Verifique se o Streamlit Community Cloud tem acesso ao HuggingFace Hub.")
-    st.stop()
-
 audio_file = st.audio_input("Clique no microfone para falar com a IA")
 
 if audio_file is not None:
@@ -58,7 +65,6 @@ if audio_file is not None:
         f.write(audio_file.getbuffer())
 
     try:
-        # --- TRANSCRIÇÃO ---
         with st.spinner("🤖 Transcrevendo..."):
             whisper_model = load_whisper()
             segments, _ = whisper_model.transcribe(filename, beam_size=5, language="pt")
@@ -68,10 +74,11 @@ if audio_file is not None:
         st.write(texto_transcrito)
         st.write("---")
 
-        # --- SÍNTESE DE VOZ ---
         with st.spinner("🗣️ Gerando áudio..."):
+            pipeline = get_pipeline()
             texto_resposta = f"Você acabou de dizer: {texto_transcrito}"
-            generator = kokoro_pipeline(
+
+            generator = pipeline(
                 texto_resposta,
                 voice=id_da_voz,
                 speed=1.0,
@@ -85,10 +92,9 @@ if audio_file is not None:
                 st.audio(buffer, format="audio/wav", autoplay=True)
 
     except Exception as e:
-        # Agora o erro real aparece — não mais mascarado
-        st.error(f"Erro no processamento: {e}")
+        st.error(f"Erro: {e}")
         import traceback
-        st.code(traceback.format_exc())  # mostra o traceback completo para diagnóstico
+        st.code(traceback.format_exc())
 
     finally:
         if os.path.exists(filename):
