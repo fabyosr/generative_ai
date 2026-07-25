@@ -1,6 +1,7 @@
 from faster_whisper import WhisperModel
 from kokoro import KPipeline, KModel
 import kokoro.modules as kokoro_modules
+import streamlit as st
 import soundfile as sf
 import numpy as np
 import torch
