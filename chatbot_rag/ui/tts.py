@@ -165,7 +165,6 @@ def tts(texto_resposta, id_voz = "pf_dora"):
 	    sf.write(buffer, audio_final, SAMPLE_RATE, format='WAV')
 	    buffer.seek(0)
 	    return buffer
-	    st.audio(buffer, format="audio/wav", autoplay=True)
 	except Exception as e:
 		return -1
 	    # st.error(f"Erro: {e}")
