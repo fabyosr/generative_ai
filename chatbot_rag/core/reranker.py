@@ -114,6 +114,7 @@ class Reranker:
             self._model = CrossEncoder(self._model_name, device=self._device)
             os.write(1, 'CrossEncoder ok \n'.encode('utf-8'))
         except ImportError as e:
+            os.write(1, f'error {e} \n'.encode('utf-8'))
             raise ImportError(
                 "sentence-transformers é necessário para o reranker. "
                 "Instale com: pip install sentence-transformers"
