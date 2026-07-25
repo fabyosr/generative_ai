@@ -18,7 +18,7 @@ Solução para input fixo:
 
 import os
 import streamlit as st
-from tts import tts
+from .tts import tts
 from langchain_core.messages import AIMessage, HumanMessage
 
 AVATAR_AI    = "🤖"
