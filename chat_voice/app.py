@@ -6,6 +6,7 @@ import soundfile as sf
 import numpy as np
 import torch
 import io
+import psutil
 import os
 
 # ── Patches de compatibilidade (mantidos da versão anterior) ─────────────────
@@ -151,6 +152,18 @@ def load_kmodel():
 def get_pipeline():
     return KPipeline(lang_code='p', model=load_kmodel(), device='cpu')
 
+# ── Recursos servidor ──────────────────────────────────────────────────────────
+
+def server_resource():
+    # Coleta dados do processo atual do Python
+    processo = psutil.Process()
+    memoria_uso_bytes = processo.memory_info().rss
+    memoria_uso_mb = memoria_uso_bytes / (1024 * 1024)
+
+    # Coleta uso de CPU do sistema/processo
+    cpu_uso = psutil.cpu_percent(interval=0.1)
+    return (memoria_uso_mb, cpu_uso)
+
 # ── Interface ─────────────────────────────────────────────────────────────────
 st.title("🎙️ Chatbot de Voz Expressivo (Faster-Whisper + Kokoro)")
 st.sidebar.header("⚙️ Configurações de Voz")
@@ -170,6 +183,9 @@ fator_velocidade = st.sidebar.slider(
 )
 
 st.write(f"Voz selecionada: **{voz_label}**")
+svr_resource = server_resource()
+st.sidebar.write(f"💾 Memória RAM Usada pelo App {svr_resource[0]:.2f} MB")
+st.sidebar.write(f"🏿 Uso de CPU {svr_resource[1]:.1f}%")
 
 audio_file = st.audio_input("Clique no microfone para falar com a IA")
 
