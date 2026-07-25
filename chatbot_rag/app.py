@@ -348,9 +348,11 @@ def _process_rag(
 
     raw_answer   = rag_result["answer"]
     context_docs = rag_result.get("context", [])
+    os.write(1, 'rodou rag_result.\n'.encode('utf-8'))
 
     # Extrai <think> da resposta RAG imediatamente após geração
     think = parse_think(raw_answer)
+    os.write(1, 'rodou think.\n'.encode('utf-8'))
     st.session_state.last_think_result = think
     trace.run_step(
         label     = "Parsing de chain-of-thought",
@@ -364,6 +366,8 @@ def _process_rag(
     answer = think.clean_answer   # resposta limpa para o usuário
 
     # --- 3. Reranker ---
+    os.write(1, '3. Reranker.\n'.encode('utf-8'))
+    
     rerank_result = trace.run_step(
         label     = "Rerankeando chunks (cross-encoder)",
         icon      = "🔀",
