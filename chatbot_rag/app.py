@@ -375,6 +375,7 @@ def _process_rag(
     )
     st.session_state.last_rerank_result = rerank_result
     final_docs = rerank_result.docs if rerank_result.docs else context_docs
+    print('passou por Rerankeando chunks')
 
     # --- 4. Store no cache ---
     trace.run_step(
@@ -383,6 +384,7 @@ def _process_rag(
         fn        = lambda: cache.store(query, answer, final_docs),
         detail_fn = lambda _: f"Cache: {cache.size} entradas · threshold: {cache.threshold}",
     )
+    print('Armazenando no cache semântico. FIM RAG')
 
     return answer, final_docs
 
@@ -504,7 +506,7 @@ def _process_query(query: str, config: dict) -> None:
                 main_provider       = config["provider"],
                 classifier_provider = config.get("classifier_provider", "hf_serverless"),
             )
-            print(classifier_llm)
+            print('Instanciou classificador.')
 
             # Intenção com modelo dedicado e contexto dos documentos
             intent_result = trace.run_step(
@@ -522,6 +524,7 @@ def _process_query(query: str, config: dict) -> None:
             st.session_state.last_intent_result = intent_result
             st.session_state.last_cache_result  = None
             st.session_state.last_rerank_result = None
+            print('rodou agente classificador.')
 
             trace.add_divider()
 
@@ -531,6 +534,7 @@ def _process_query(query: str, config: dict) -> None:
             elif intent_result.intent == IntentType.FOLLOWUP:
                 answer, context_docs = _process_followup(query, llm, trace)
             else:
+                print('processando RAG.')
                 answer, context_docs = _process_rag(query, llm, config, trace)
                 st.session_state.rag_query_history.append(query)
 
