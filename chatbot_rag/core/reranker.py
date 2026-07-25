@@ -33,6 +33,7 @@ Nota de design:
 from __future__ import annotations
 
 import time
+import os
 from dataclasses import dataclass
 
 from langchain_core.documents import Document
