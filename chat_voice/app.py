@@ -173,6 +173,7 @@ def server_resource():
     st.sidebar.write(f"🏿 Uso de CPU {cpu_uso:.1f}%")
 
 
+    st.sidebar.write(f"Total RAM:       {memory.total:.2f} GB")
     st.sidebar.write(f"Total RAM:       {memory.total / gb:.2f} GB")
     st.sidebar.write(f"Available RAM:   {memory.available / gb:.2f} GB")
     st.sidebar.write(f"Used RAM:        {memory.used / gb:.2f} GB")
