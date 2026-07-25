@@ -79,7 +79,6 @@ from ui.pipeline_trace import (
     cot_detail,
 )
 
-
 # =============================================================================
 # Configuração da página
 # =============================================================================
@@ -505,6 +504,7 @@ def _process_query(query: str, config: dict) -> None:
                 main_provider       = config["provider"],
                 classifier_provider = config.get("classifier_provider", "hf_serverless"),
             )
+            print(classifier_llm)
 
             # Intenção com modelo dedicado e contexto dos documentos
             intent_result = trace.run_step(
