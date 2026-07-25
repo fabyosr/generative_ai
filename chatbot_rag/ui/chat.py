@@ -18,6 +18,7 @@ Solução para input fixo:
 
 import os
 import streamlit as st
+from tts import tts
 from langchain_core.messages import AIMessage, HumanMessage
 
 AVATAR_AI    = "🤖"
@@ -134,3 +135,6 @@ def render_ai_response(answer: str, latency: float, context_docs: list) -> None:
                         st.markdown(f"**Arquivo:** `{file}`  \n**Página:** {page}")
                         st.divider()
                         st.caption(doc.page_content)
+        # text to speech
+        st.audio(tts(answer), format="audio/wav", autoplay=True)
+        
