@@ -325,6 +325,7 @@ def _process_rag(
         detail_fn = cache_detail,
     )
     st.session_state.last_cache_result = cache_result
+    os.write(1, '1. Semantic Cache.\n'.encode('utf-8'))
 
     if cache_result.hit:
         trace.add_info("⚡", "Resposta recuperada do cache",
@@ -333,6 +334,7 @@ def _process_rag(
 
     # --- 2. RAG Chain ---
     rag_chain = build_rag_chain(llm, st.session_state.retriever)
+    os.write(1, 'rodou RAG Chain.\n'.encode('utf-8'))
 
     rag_result = trace.run_step(
         label     = "Recuperando documentos (FAISS MMR)",
