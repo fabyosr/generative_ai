@@ -8,6 +8,7 @@ import torch
 import io
 import psutil
 import os
+import re
 
 # ── Patches de compatibilidade (mantidos da versão anterior) ─────────────────
 def _kmodel_device(self):
@@ -158,8 +159,32 @@ opcoes_vozes = {
     "Santa / Papai Noel (Masculino - PT-BR)": "pm_santa",
 }
 
+def clean_markdown_for_tts(text: str) -> str:
+    # Remove code blocks
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    
+    # Remove images and links, keeping only the link text: [text](url) -> text
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    
+    # Remove bold, italics, and strikethrough markers (*, _, ~)
+    text = re.sub(r'(\*\*|__|\*|_|~)', '', text)
+    
+    # Remove headers (#) and blockquotes (>) at the start of lines
+    text = re.sub(r'^[#>]+\s*', '', text, flags=re.MULTILINE)
+    
+    # Remove unordered (- * +) and ordered (1.) list markers at the start of lines
+    text = re.sub(r '^[\s]*([-*+]|\d+\.)\s+', '', text, flags=re.MULTILINE)
+    
+    # Clean up extra whitespace and newlines
+    text = re.sub(r'\n+', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    
+    return text.strip()
+
 def tts(texto_resposta, id_voz = "pf_dora"):
 	try:
+        clean_markdown_for_tts(texto_resposta)
 	    pipeline = get_pipeline()
 	    audio_final = gerar_audio_expressivo(pipeline, texto_resposta, id_voz)
 	    buffer = io.BytesIO()
@@ -171,3 +196,7 @@ def tts(texto_resposta, id_voz = "pf_dora"):
 	    # st.error(f"Erro: {e}")
 	    # import traceback
 	    # st.code(traceback.format_exc())
+
+# ; : , → Adds short, natural pauses within a sentence..
+# ! ? → Triggers full sentence stops and shifts the ending pitch.
+# — … → Introduces longer trailing pauses or dramatic break
