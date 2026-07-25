@@ -136,5 +136,5 @@ def render_ai_response(answer: str, latency: float, context_docs: list) -> None:
                         st.divider()
                         st.caption(doc.page_content)
         # text to speech
-        st.audio(tts(answer), format="audio/wav", autoplay=True)
+        st.audio(tts("pf_dora", answer), format="audio/wav", autoplay=True)
         
