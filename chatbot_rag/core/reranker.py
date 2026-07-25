@@ -106,7 +106,7 @@ class Reranker:
         Lança ImportError descritivo se sentence-transformers não estiver
         instalado, em vez do genérico ModuleNotFoundError.
         """
-        print('reranker................')
+        os.write(1, 'reranker.................\n'.encode('utf-8'))
         try:
             from sentence_transformers import CrossEncoder
             self._model = CrossEncoder(self._model_name, device=self._device)
@@ -170,12 +170,12 @@ class Reranker:
             self._load_model()
 
         docs_before = len(docs)
-        print('docs_before')
+        os.write(1, 'docs_before.\n'.encode('utf-8'))
 
         # --- Score de relevância par a par ---
         pairs      = [(query, doc.page_content) for doc in docs]
         raw_scores = self._model.predict(pairs).tolist()
-        print('Score de relevância par a par')
+        os.write(1, 'Score de relevância par a par.\n'.encode('utf-8'))
 
         # --- Ordena por score decrescente ---
         scored_docs = sorted(
@@ -183,13 +183,13 @@ class Reranker:
             key=lambda x: x[0],
             reverse=True,
         )
-        print('Ordena por score decrescente')
+        os.write(1, 'Ordena por score decrescente.\n'.encode('utf-8'))
 
         # --- Aplica método de seleção ---
         if method == "threshold":
             # Todos acima do score mínimo, sem limite de k
             selected = [(s, d) for s, d in scored_docs if float(s) >= min_score]
-            print('Ordena por score decrescente')
+            os.write(1, 'Ordena por score decrescente.\n'.encode('utf-8'))
             if not selected:
                 selected = [scored_docs[0]]  # garante ao menos 1
 
@@ -199,7 +199,7 @@ class Reranker:
                 (s, d) for s, d in scored_docs[:effective_k]
                 if float(s) >= min_score
             ]
-            print('Até effective_k, desde que acima de min_score')
+            os.write(1, 'Até effective_k, desde que acima de min_score.\n'.encode('utf-8'))
             if not selected:
                 selected = [scored_docs[0]]  # garante ao menos 1
 
@@ -208,15 +208,15 @@ class Reranker:
 
         final_docs   = [doc   for _, doc   in selected]
         final_scores = [round(float(s), 4) for s, _ in selected]
-        print('final_scores')
+        os.write(1, 'final_scores.\n'.encode('utf-8'))
 
         # --- Métricas de dispersão ---
         top_score   = final_scores[0]  if final_scores else 0.0
         worst_score = final_scores[-1] if final_scores else 0.0
         score_delta = round(top_score - worst_score, 4)
-        print('Métricas de dispersão')
+        os.write(1, 'Métricas de dispersão.\n'.encode('utf-8'))
 
-        print('RerankResult....')
+        os.write(1, 'RerankResult.....\n'.encode('utf-8'))
 
         return RerankResult(
             docs        = final_docs,
