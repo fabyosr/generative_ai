@@ -110,7 +110,9 @@ class Reranker:
         os.write(1, 'reranker.................\n'.encode('utf-8'))
         try:
             from sentence_transformers import CrossEncoder
+            os.write(1, f'CrossEncoder {self._model_name} {self._device} \n'.encode('utf-8'))
             self._model = CrossEncoder(self._model_name, device=self._device)
+            os.write(1, 'CrossEncoder ok \n'.encode('utf-8'))
         except ImportError as e:
             raise ImportError(
                 "sentence-transformers é necessário para o reranker. "
@@ -169,6 +171,8 @@ class Reranker:
         # Lazy load do modelo
         if self._model is None:
             self._load_model()
+
+        os.write(1, f'{len(docs)} .\n'.encode('utf-8'))
 
         docs_before = len(docs)
         os.write(1, 'docs_before.\n'.encode('utf-8'))
