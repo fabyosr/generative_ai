@@ -170,10 +170,12 @@ class Reranker:
             self._load_model()
 
         docs_before = len(docs)
+        print('docs_before')
 
         # --- Score de relevância par a par ---
         pairs      = [(query, doc.page_content) for doc in docs]
         raw_scores = self._model.predict(pairs).tolist()
+        print('Score de relevância par a par')
 
         # --- Ordena por score decrescente ---
         scored_docs = sorted(
@@ -181,11 +183,13 @@ class Reranker:
             key=lambda x: x[0],
             reverse=True,
         )
+        print('Ordena por score decrescente')
 
         # --- Aplica método de seleção ---
         if method == "threshold":
             # Todos acima do score mínimo, sem limite de k
             selected = [(s, d) for s, d in scored_docs if float(s) >= min_score]
+            print('Ordena por score decrescente')
             if not selected:
                 selected = [scored_docs[0]]  # garante ao menos 1
 
@@ -195,6 +199,7 @@ class Reranker:
                 (s, d) for s, d in scored_docs[:effective_k]
                 if float(s) >= min_score
             ]
+            print('Até effective_k, desde que acima de min_score')
             if not selected:
                 selected = [scored_docs[0]]  # garante ao menos 1
 
@@ -203,11 +208,13 @@ class Reranker:
 
         final_docs   = [doc   for _, doc   in selected]
         final_scores = [round(float(s), 4) for s, _ in selected]
+        print('final_scores')
 
         # --- Métricas de dispersão ---
         top_score   = final_scores[0]  if final_scores else 0.0
         worst_score = final_scores[-1] if final_scores else 0.0
         score_delta = round(top_score - worst_score, 4)
+        print('Métricas de dispersão')
 
         print('RerankResult....')
 
