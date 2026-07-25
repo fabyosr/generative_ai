@@ -183,7 +183,7 @@ def clean_markdown_for_tts(text: str) -> str:
     return text.strip()
 
 def tts(texto_resposta, id_voz = "pf_dora"):
-	try:
+    try:
         clean_markdown_for_tts(texto_resposta)
 	    pipeline = get_pipeline()
 	    audio_final = gerar_audio_expressivo(pipeline, texto_resposta, id_voz)
