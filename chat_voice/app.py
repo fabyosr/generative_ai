@@ -169,8 +169,8 @@ def server_resource():
     # Convert bytes to Gigabytes (GB) for easy reading
     gb = 1024 ** 3
 
-    st.sidebar.write(f"💾 Memória RAM Usada {svr_resource[0]:.2f} MB")
-    st.sidebar.write(f"🏿 Uso de CPU {svr_resource[1]:.1f}%")
+    st.sidebar.write(f"💾 Memória RAM Usada {memoria_uso_mb:.2f} MB")
+    st.sidebar.write(f"🏿 Uso de CPU {cpu_uso:.1f}%")
 
 
     st.sidebar.write(f"Total RAM:       {memory.total / gb:.2f} GB")
