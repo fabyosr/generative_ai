@@ -174,7 +174,7 @@ def clean_markdown_for_tts(text: str) -> str:
     text = re.sub(r'^[#>]+\s*', '', text, flags=re.MULTILINE)
     
     # Remove unordered (- * +) and ordered (1.) list markers at the start of lines
-    text = re.sub(r '^[\s]*([-*+]|\d+\.)\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^[\s]*([-*+]|\d+\.)\s+', '', text, flags=re.MULTILINE)
     
     # Clean up extra whitespace and newlines
     text = re.sub(r'\n+', ' ', text)
