@@ -162,7 +162,22 @@ def server_resource():
 
     # Coleta uso de CPU do sistema/processo
     cpu_uso = psutil.cpu_percent(interval=0.1)
-    return (memoria_uso_mb, cpu_uso)
+    
+    # Get complete system memory statistics
+    memory = psutil.virtual_memory()
+
+    # Convert bytes to Gigabytes (GB) for easy reading
+    gb = 1024 ** 3
+
+    st.sidebar.write(f"💾 Memória RAM Usada {svr_resource[0]:.2f} MB")
+    st.sidebar.write(f"🏿 Uso de CPU {svr_resource[1]:.1f}%")
+
+
+    st.sidebar.write(f"Total RAM:       {memory.total / gb:.2f} GB")
+    st.sidebar.write(f"Available RAM:   {memory.available / gb:.2f} GB")
+    st.sidebar.write(f"Used RAM:        {memory.used / gb:.2f} GB")
+    st.sidebar.write(f"Free RAM:        {memory.free / gb:.2f} GB")
+    st.sidebar.write(f"RAM Usage:       {memory.percent}%")
 
 # ── Interface ─────────────────────────────────────────────────────────────────
 st.title("🎙️ Chatbot de Voz Expressivo (Faster-Whisper + Kokoro)")
@@ -183,9 +198,7 @@ fator_velocidade = st.sidebar.slider(
 )
 
 st.write(f"Voz selecionada: **{voz_label}**")
-svr_resource = server_resource()
-st.sidebar.write(f"💾 Memória RAM Usada pelo App {svr_resource[0]:.2f} MB")
-st.sidebar.write(f"🏿 Uso de CPU {svr_resource[1]:.1f}%")
+server_resource()
 
 audio_file = st.audio_input("Clique no microfone para falar com a IA")
 
