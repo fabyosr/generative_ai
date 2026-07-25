@@ -185,17 +185,17 @@ def clean_markdown_for_tts(text: str) -> str:
 def tts(texto_resposta, id_voz = "pf_dora"):
     try:
         clean_markdown_for_tts(texto_resposta)
-	    pipeline = get_pipeline()
-	    audio_final = gerar_audio_expressivo(pipeline, texto_resposta, id_voz)
-	    buffer = io.BytesIO()
-	    sf.write(buffer, audio_final, SAMPLE_RATE, format='WAV')
-	    buffer.seek(0)
-	    return buffer
-	except Exception as e:
-		return -1
-	    # st.error(f"Erro: {e}")
-	    # import traceback
-	    # st.code(traceback.format_exc())
+        pipeline = get_pipeline()
+        audio_final = gerar_audio_expressivo(pipeline, texto_resposta, id_voz)
+        buffer = io.BytesIO()
+        sf.write(buffer, audio_final, SAMPLE_RATE, format='WAV')
+        buffer.seek(0)
+        return buffer
+    except Exception as e:
+        return -1
+        # st.error(f"Erro: {e}")
+        # import traceback
+        # st.code(traceback.format_exc())
 
 # ; : , → Adds short, natural pauses within a sentence..
 # ! ? → Triggers full sentence stops and shifts the ending pitch.
