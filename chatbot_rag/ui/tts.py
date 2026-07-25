@@ -157,7 +157,7 @@ opcoes_vozes = {
     "Santa / Papai Noel (Masculino - PT-BR)": "pm_santa",
 }
 
-def tts(id_voz = "pf_dora", texto_resposta):
+def tts(texto_resposta, id_voz = "pf_dora"):
 	try:
 	    pipeline = get_pipeline()
 	    audio_final = gerar_audio_expressivo(pipeline, texto_resposta, id_voz)
