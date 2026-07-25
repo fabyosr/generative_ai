@@ -211,6 +211,7 @@ def build_rag_chain(llm, retriever):
     context_prompt, qa_prompt = _build_prompts()
 
     # Chain 1: recupera documentos consciente do histórico
+    print('recupera documentos consciente do histórico')
     history_aware_retriever = create_history_aware_retriever(
         llm=llm,
         retriever=retriever,
@@ -218,9 +219,11 @@ def build_rag_chain(llm, retriever):
     )
 
     # Chain 2: gera resposta usando os documentos recuperados
+    print('Chain 2: gera resposta usando os documentos recuperados')
     qa_chain = create_stuff_documents_chain(llm, qa_prompt)
 
     # Chain completa: combina recuperação + geração
     rag_chain = create_retrieval_chain(history_aware_retriever, qa_chain)
+    print('Chain completa: combina recuperação + geração')
 
     return rag_chain
