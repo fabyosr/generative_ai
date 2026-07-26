@@ -44,6 +44,7 @@ Fluxo completo por mensagem:
 
 import streamlit as st
 import os
+import psutil
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -645,6 +646,35 @@ def _process_query(query: str, config: dict) -> None:
 
     render_ai_response(answer, latency, context_docs)
 
+# ── Recursos servidor ──────────────────────────────────────────────────────────
+
+def server_resource():
+    # Coleta dados do processo atual do Python
+    processo = psutil.Process()
+    memoria_uso_bytes = processo.memory_info().rss
+    memoria_uso_mb = memoria_uso_bytes / (1024 * 1024)
+
+    # Coleta uso de CPU do sistema/processo
+    cpu_uso = psutil.cpu_percent(interval=0.1)
+    
+    # Get complete system memory statistics
+    memory = psutil.virtual_memory()
+
+    # Convert bytes to Gigabytes (GB) for easy reading
+    gb = 1024 ** 3
+
+    st.sidebar.write(f"💾 Memória RAM Usada {memoria_uso_mb:.2f} MB")
+    st.sidebar.write(f"🏿 Uso de CPU {cpu_uso:.1f}%")
+
+
+    st.sidebar.write(f"Total RAM:       {memory.total:.2f} GB")
+    st.sidebar.write(f"Total RAM:       {memory.total / gb:.2f} GB")
+    st.sidebar.write(f"Available RAM:   {memory.available / gb:.2f} GB")
+    st.sidebar.write(f"Used RAM:        {memory.used / gb:.2f} GB")
+    st.sidebar.write(f"Free RAM:        {memory.free / gb:.2f} GB")
+    st.sidebar.write(f"RAM Usage:       {memory.percent}%")
+
+
 
 # =============================================================================
 # Entry point
@@ -698,6 +728,8 @@ def main() -> None:
             value=st.session_state.show_pipeline_trace,
             help="Exibe o trace do pipeline (thinking box) no chat.",
         )
+
+    server_resource()
 
     # chat_input fora das tabs → ancora abaixo do container de histórico
     # independente da aba ativa, sempre visível e em posição fixa
