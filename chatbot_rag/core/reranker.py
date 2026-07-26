@@ -33,6 +33,7 @@ Nota de design:
 from __future__ import annotations
 
 import time
+import gc
 import os
 import psutil
 from dataclasses import dataclass
@@ -112,6 +113,9 @@ class Reranker:
         from sentence_transformers import CrossEncoder
         os.write(1, f'importou CrossEncoder {self._model_name} {self._device} \n'.encode('utf-8'))
 
+        # Force garbage collection
+        gc.collect()
+
         processo = psutil.Process()
         memoria_uso_bytes = processo.memory_info().rss
         memoria_uso_mb = memoria_uso_bytes / (1024 * 1024)
@@ -119,7 +123,7 @@ class Reranker:
         # Coleta uso de CPU do sistema/processo
         cpu_uso = psutil.cpu_percent(interval=0.1)
         
-        
+
         os.write(1, f"💾 Memória RAM Usada {memoria_uso_mb:.2f} MB".encode('utf-8'))
         os.write(1, f"🏿 Uso de CPU {cpu_uso:.1f}%".encode('utf-8'))
 
