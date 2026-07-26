@@ -402,6 +402,7 @@ def _process_rag(
 
 def _render_error(title: str, message: str, hint: str = "") -> None:
     """Exibe erro amigável no chat em vez de exceção crua."""
+    os.write(1, f"**{title}**\n\n{message}".encode('utf-8'))
     with st.chat_message("assistant", avatar="⚠️"):
         st.error(f"**{title}**\n\n{message}", icon="🚨")
         if hint:
@@ -546,6 +547,7 @@ def _process_query(query: str, config: dict) -> None:
                 st.session_state.rag_query_history.append(query)
 
             # Analytics
+            os.write(1, 'Analytics.'.encode('utf-8'))
             trace.add_divider()
             analytics = trace.run_step(
                 label     = "Calculando analytics de qualidade",
@@ -570,6 +572,7 @@ def _process_query(query: str, config: dict) -> None:
             )
 
             # Clustering
+            os.write(1, 'Clustering.'.encode('utf-8'))
             rag_queries = st.session_state.rag_query_history
             if len(rag_queries) >= 5:
                 clustering = trace.run_step(
@@ -593,6 +596,7 @@ def _process_query(query: str, config: dict) -> None:
                 )
 
             # Finaliza trace
+            os.write(1, 'Finaliza trace.'.encode('utf-8'))
             cache_status = ""
             if st.session_state.last_cache_result:
                 cache_status = (
@@ -612,6 +616,7 @@ def _process_query(query: str, config: dict) -> None:
             )
 
             # Salva HTML do trace no session_state para persistência
+            os.write(1, "Salva HTML do trace no session_state para persistência".encode('utf-8'))
             st.session_state.chat_history_traces.append(trace.get_html())
 
     except Exception as e:
