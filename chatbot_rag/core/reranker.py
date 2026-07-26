@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import time
 import os
+import psutil
 from dataclasses import dataclass
 
 from langchain_core.documents import Document
@@ -109,9 +110,23 @@ class Reranker:
         """
         os.write(1, 'reranker.................\n'.encode('utf-8'))
         from sentence_transformers import CrossEncoder
-        os.write(1, f'CrossEncoder {self._model_name} {self._device} \n'.encode('utf-8'))
+        os.write(1, f'importou CrossEncoder {self._model_name} {self._device} \n'.encode('utf-8'))
+        os.write(1, f"💾 Memória RAM Usada {memoria_uso_mb:.2f} MB".encode('utf-8'))
+        os.write(1, f"🏿 Uso de CPU {cpu_uso:.1f}%".encode('utf-8'))
+
         self._model = CrossEncoder(self._model_name, device=self._device)
         os.write(1, 'CrossEncoder ok \n'.encode('utf-8'))
+        # try:
+        #     from sentence_transformers import CrossEncoder
+        #     os.write(1, f'CrossEncoder {self._model_name} {self._device} \n'.encode('utf-8'))
+        #     self._model = CrossEncoder(self._model_name, device=self._device)
+        #     os.write(1, 'CrossEncoder ok \n'.encode('utf-8'))
+        # except ImportError as e:
+        #     os.write(1, f'error {e} \n'.encode('utf-8'))
+        #     raise ImportError(
+        #         "sentence-transformers é necessário para o reranker. "
+        #         "Instale com: pip install sentence-transformers"
+        #    ) from e
 
     def rerank(
         self,
