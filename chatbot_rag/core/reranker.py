@@ -108,17 +108,10 @@ class Reranker:
         instalado, em vez do genérico ModuleNotFoundError.
         """
         os.write(1, 'reranker.................\n'.encode('utf-8'))
-        try:
-            from sentence_transformers import CrossEncoder
-            os.write(1, f'CrossEncoder {self._model_name} {self._device} \n'.encode('utf-8'))
-            self._model = CrossEncoder(self._model_name, device=self._device)
-            os.write(1, 'CrossEncoder ok \n'.encode('utf-8'))
-        except ImportError as e:
-            os.write(1, f'error {e} \n'.encode('utf-8'))
-            raise ImportError(
-                "sentence-transformers é necessário para o reranker. "
-                "Instale com: pip install sentence-transformers"
-            ) from e
+        from sentence_transformers import CrossEncoder
+        os.write(1, f'CrossEncoder {self._model_name} {self._device} \n'.encode('utf-8'))
+        self._model = CrossEncoder(self._model_name, device=self._device)
+        os.write(1, 'CrossEncoder ok \n'.encode('utf-8'))
 
     def rerank(
         self,
