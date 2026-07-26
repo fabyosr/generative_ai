@@ -20,6 +20,7 @@ langchain-classic>=0.1.0
 langchain-openai>=0.1.0
 langchain-groq>=0.1.0
 langchain-huggingface>=0.0.3
+hf-xet>=1.5.2
 
 # --- Embeddings e vetores ---
 faiss-cpu>=1.7.4
