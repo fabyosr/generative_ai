@@ -3,7 +3,7 @@ streamlit
 faster-whisper==1.1.1
 kokoro-onnx>=0.4.0
 onnxruntime>=1.17.0
-misaki[ja]>=0.9.4
+huggingface-hub>=0.20.0
 soundfile
 numpy
 psutil
