@@ -5,6 +5,7 @@ import soundfile as sf
 import numpy as np
 import io
 import os
+import psutil
 
 # Versão Código completo com ONNX + quantização
 
