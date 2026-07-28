@@ -1,8 +1,9 @@
 gtts
 streamlit
 faster-whisper==1.1.1
-kokoro==0.9.4
-transformers>=4.36.0,<5.0.0
+kokoro-onnx>=0.4.0
+onnxruntime>=1.17.0
+misaki[ja]>=0.9.4
 soundfile
-torch
+numpy
 psutil

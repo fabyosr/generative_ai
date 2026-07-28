@@ -1,144 +1,38 @@
 import streamlit as st
 from faster_whisper import WhisperModel
-from kokoro import KPipeline, KModel
-import kokoro.modules as kokoro_modules
+from kokoro_onnx import Kokoro
 import soundfile as sf
 import numpy as np
-import torch
 import io
-import psutil
 import os
 
-# ── Patches de compatibilidade (mantidos da versão anterior) ─────────────────
-def _kmodel_device(self):
-    try:
-        return next(p.device for p in self.parameters())
-    except StopIteration:
-        return torch.device('cpu')
+# Versão Código completo com ONNX + quantização
 
-KModel.device = property(_kmodel_device)
-
-_original_albert_forward = kokoro_modules.CustomAlbert.forward
-def _safe_albert_forward(self, *args, **kwargs):
-    outputs = super(kokoro_modules.CustomAlbert, self).forward(*args, **kwargs)
-    if hasattr(outputs, 'last_hidden_state'):
-        return outputs.last_hidden_state
-    if isinstance(outputs, tuple):
-        return outputs[0]
-    return outputs
-
-kokoro_modules.CustomAlbert.forward = _safe_albert_forward
-
-# ── Constantes de áudio ───────────────────────────────────────────────────────
 SAMPLE_RATE = 24000
 
+# ── Utilitários expressivos (mantidos da versão anterior) ─────────────────────
 def silencio(ms: int) -> np.ndarray:
-    """Gera silêncio de N milissegundos."""
     return np.zeros(int(SAMPLE_RATE * ms / 1000), dtype=np.float32)
 
-# ── Pré-processador de texto expressivo ──────────────────────────────────────
-def preparar_texto_expressivo(texto: str) -> list[dict]:
-    """
-    Divide o texto em segmentos e define velocidade + pausa para cada um.
-    Retorna lista de dicts: {texto, speed, pausa_depois_ms}
-
-    Técnicas aplicadas:
-    - Frases curtas (impacto): velocidade menor, pausa maior depois
-    - Frases longas (explicação): velocidade levemente maior
-    - Pontuação '...' inserida para criar suspense/respiração
-    - '!' mantém entonação enfática do G2P
-    - Pausa maior após ponto final para dar tempo de absorção
-    """
+def preparar_segmentos(texto: str) -> list[dict]:
     import re
-
-    # Divide em sentenças respeitando . ! ?
     sentencas = re.split(r'(?<=[.!?])\s+', texto.strip())
     segmentos = []
-
     for i, s in enumerate(sentencas):
         s = s.strip()
         if not s:
             continue
-
-        n_palavras = len(s.split())
+        n = len(s.split())
         tem_exclamacao = s.endswith('!')
         tem_interrogacao = s.endswith('?')
-        eh_curta = n_palavras <= 5
-        eh_longa = n_palavras >= 15
-        eh_primeira = i == 0
+        eh_curta = n <= 5
         eh_ultima = i == len(sentencas) - 1
 
-        # Velocidade: frases curtas e impactantes falam mais devagar
-        if eh_curta and (tem_exclamacao or eh_primeira or eh_ultima):
-            speed = 0.85  # dramático, deliberado
-        elif eh_longa:
-            speed = 1.05  # explicação flui um pouco mais rápido
-        else:
-            speed = 0.95  # conversacional ligeiramente abaixo do normal
+        speed = 0.85 if (eh_curta and tem_exclamacao) else 1.05 if n >= 15 else 0.95
+        pausa_ms = 0 if eh_ultima else 600 if tem_exclamacao else 500 if tem_interrogacao else 400 if eh_curta else 200
 
-        # Pausa depois: quanto maior a pontuação, mais tempo para absorver
-        if eh_ultima:
-            pausa_ms = 0  # sem pausa no último segmento
-        elif tem_exclamacao:
-            pausa_ms = 600  # ênfase precisa de espaço depois
-        elif tem_interrogacao:
-            pausa_ms = 500  # pergunta cria expectativa
-        elif eh_curta:
-            pausa_ms = 400  # frase curta = pausa para deixar a ideia "aterrissar"
-        else:
-            pausa_ms = 200  # fluxo normal entre sentenças
-
-        segmentos.append({
-            "texto": s,
-            "speed": speed,
-            "pausa_depois_ms": pausa_ms,
-        })
-
+        segmentos.append({"texto": s, "speed": speed, "pausa_ms": pausa_ms})
     return segmentos
-
-# ── Gerador de áudio expressivo ───────────────────────────────────────────────
-def gerar_audio_expressivo(pipeline, texto: str, voice: str) -> np.ndarray:
-    """
-    Processa o texto em segmentos com velocidade e pausas individuais.
-    Retorna um único array numpy com o áudio completo.
-    """
-    segmentos = preparar_texto_expressivo(texto)
-    chunks_audio = []
-
-    for seg in segmentos:
-        # Gera o áudio do segmento com a velocidade definida
-        for gs, ps, audio in pipeline(
-            seg["texto"],
-            voice=voice,
-            speed=seg["speed"],
-            split_pattern=None,  # já dividimos manualmente
-        ):
-            if audio is not None:
-                chunks_audio.append(audio)
-
-        # Insere pausa estratégica após o segmento
-        if seg["pausa_depois_ms"] > 0:
-            chunks_audio.append(silencio(seg["pausa_depois_ms"]))
-
-    if not chunks_audio:
-        return np.zeros(SAMPLE_RATE, dtype=np.float32)
-
-    return np.concatenate(chunks_audio)
-
-# ── Pós-processador: enriquece texto com pontuação expressiva ────────────────
-def enriquecer_pontuacao(texto: str) -> str:
-    """
-    Adiciona pontuação expressiva que o G2P do Kokoro interpreta:
-    - Reticências criam suspense/respiração natural
-    - Vírgulas inseridas em listas longas criam ritmo
-    Não altera o significado, só a prosódia.
-    """
-    import re
-    # Já tem pontuação adequada? Retorna como está.
-    if re.search(r'[.!?]', texto):
-        return texto
-    # Texto sem pontuação final: adiciona ponto para fechar a prosódia
-    return texto.strip() + '.'
 
 # ── Carregamento dos modelos ──────────────────────────────────────────────────
 @st.cache_resource
@@ -146,11 +40,15 @@ def load_whisper():
     return WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=2)
 
 @st.cache_resource
-def load_kmodel():
-    return KModel(repo_id='hexgrad/Kokoro-82M').to('cpu').eval()
-
-def get_pipeline():
-    return KPipeline(lang_code='p', model=load_kmodel(), device='cpu')
+def load_kokoro():
+    """
+    Baixa e carrega o modelo ONNX quantizado (q8f16 = 86 MB).
+    Sem PyTorch, sem transformers, sem patches.
+    """
+    return Kokoro.from_pretrained(
+        "onnx-community/Kokoro-82M-v1.0-ONNX",
+        dtype="q8f16",   # opções: fp32, fp16, q8, q8f16, q4, q4f16
+    )
 
 # ── Recursos servidor ──────────────────────────────────────────────────────────
 
@@ -180,28 +78,23 @@ def server_resource():
     st.sidebar.write(f"Free RAM:        {memory.free / gb:.2f} GB")
     st.sidebar.write(f"RAM Usage:       {memory.percent}%")
 
+
 # ── Interface ─────────────────────────────────────────────────────────────────
-st.title("🎙️ Chatbot de Voz Expressivo (Faster-Whisper + Kokoro)")
-st.sidebar.header("⚙️ Configurações de Voz")
+st.title("🎙️ Chatbot de Voz (Faster-Whisper + Kokoro ONNX)")
+st.sidebar.header("⚙️ Configurações")
 
 opcoes_vozes = {
     "Dora (Feminina - PT-BR)": "pf_dora",
     "Alex (Masculino - PT-BR)": "pm_alex",
-    "Santa / Papai Noel (Masculino - PT-BR)": "pm_santa",
+    "Santa (Masculino - PT-BR)": "pm_santa",
 }
-voz_label = st.sidebar.selectbox("Voz da IA:", list(opcoes_vozes.keys()))
+voz_label = st.sidebar.selectbox("Voz:", list(opcoes_vozes.keys()))
 id_voz = opcoes_vozes[voz_label]
 
-# Controle manual de velocidade global (multiplicador sobre o speed do segmento)
-fator_velocidade = st.sidebar.slider(
-    "Velocidade global", min_value=0.7, max_value=1.3, value=1.0, step=0.05,
-    help="Ajuste fino sobre a velocidade calculada por segmento"
-)
-
-st.write(f"Voz selecionada: **{voz_label}**")
+st.write(f"Voz: **{voz_label}**")
 server_resource()
 
-audio_file = st.audio_input("Clique no microfone para falar com a IA")
+audio_file = st.audio_input("🎤 Clique para falar")
 
 if audio_file is not None:
     st.audio(audio_file)
@@ -211,9 +104,10 @@ if audio_file is not None:
         f.write(audio_file.getbuffer())
 
     try:
+        # --- TRANSCRIÇÃO ---
         with st.spinner("🤖 Transcrevendo..."):
-            whisper_model = load_whisper()
-            segments, _ = whisper_model.transcribe(
+            whisper = load_whisper()
+            segments, _ = whisper.transcribe(
                 filename,
                 language="pt",
                 beam_size=5,
@@ -222,36 +116,40 @@ if audio_file is not None:
                 condition_on_previous_text=False,
                 vad_filter=True,
                 vad_parameters=dict(min_silence_duration_ms=500, threshold=0.5),
-                initial_prompt="Transcrição em português brasileiro. Conversa com assistente de voz.",
+                initial_prompt="Transcrição em português brasileiro.",
             )
-            texto_transcrito = "".join([seg.text for seg in segments])
+            texto = "".join([s.text for s in segments])
 
         st.success("📝 Você disse:")
-        st.write(texto_transcrito)
+        st.write(texto)
         st.write("---")
 
-        with st.spinner("🗣️ Gerando áudio expressivo..."):
-            pipeline = get_pipeline()
+        # --- SÍNTESE ONNX EXPRESSIVA ---
+        with st.spinner("🗣️ Gerando áudio..."):
+            kokoro = load_kokoro()
+            resposta = f"Você disse: {texto}."
+            segmentos = preparar_segmentos(resposta)
 
-            texto_resposta = enriquecer_pontuacao(
-                f"Você acabou de dizer: {texto_transcrito}"
-            )
+            chunks = []
+            for seg in segmentos:
+                # kokoro_onnx retorna (samples, sample_rate)
+                audio_seg, sr = kokoro.create(
+                    seg["texto"],
+                    voice=id_voz,
+                    speed=seg["speed"],
+                    lang="pt-br",
+                )
+                chunks.append(audio_seg)
+                if seg["pausa_ms"] > 0:
+                    chunks.append(silencio(seg["pausa_ms"]))
 
-            audio_final = gerar_audio_expressivo(pipeline, texto_resposta, id_voz)
-
-            # Aplica fator de velocidade global re-amostrando (simples e eficaz)
-            if fator_velocidade != 1.0:
-                indices = np.round(
-                    np.arange(0, len(audio_final), fator_velocidade)
-                ).astype(int)
-                indices = indices[indices < len(audio_final)]
-                audio_final = audio_final[indices]
+            audio_final = np.concatenate(chunks) if chunks else np.zeros(sr)
 
             buffer = io.BytesIO()
-            sf.write(buffer, audio_final, SAMPLE_RATE, format='WAV')
+            sf.write(buffer, audio_final, SAMPLE_RATE, format="WAV")
             buffer.seek(0)
 
-            st.subheader("🔊 Resposta da IA:")
+            st.subheader("🔊 Resposta:")
             st.audio(buffer, format="audio/wav", autoplay=True)
 
     except Exception as e:
