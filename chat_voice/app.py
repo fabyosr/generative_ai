@@ -6,6 +6,7 @@ import soundfile as sf
 import numpy as np
 import io
 import os
+import psutil
 
 SAMPLE_RATE = 24000
 
