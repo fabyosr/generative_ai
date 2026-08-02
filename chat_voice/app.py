@@ -6,9 +6,16 @@ import soundfile as sf
 import numpy as np
 import io
 import os
-import psutil
 
 SAMPLE_RATE = 24000
+REPO_ID     = "onnx-community/Kokoro-82M-v1.0-ONNX"
+
+# Vozes PT-BR disponíveis no repositório
+VOZES_PTBR = {
+    "Dora (Feminina - PT-BR)": "pf_dora",
+    "Alex (Masculino - PT-BR)": "pm_alex",
+    "Santa (Masculino - PT-BR)": "pm_santa",
+}
 
 # ── Utilitários expressivos ───────────────────────────────────────────────────
 def silencio(ms: int) -> np.ndarray:
@@ -24,11 +31,11 @@ def preparar_segmentos(texto: str) -> list[dict]:
             continue
         n = len(s.split())
         eh_ultima = i == len(sentencas) - 1
-        speed = 0.85 if (n <= 5 and s.endswith('!')) else 1.05 if n >= 15 else 0.95
-        pausa_ms = (0 if eh_ultima else
+        speed    = 0.85 if (n <= 5 and s.endswith('!')) else 1.05 if n >= 15 else 0.95
+        pausa_ms = (0   if eh_ultima       else
                     600 if s.endswith('!') else
                     500 if s.endswith('?') else
-                    400 if n <= 5 else 200)
+                    400 if n <= 5          else 200)
         segmentos.append({"texto": s, "speed": speed, "pausa_ms": pausa_ms})
     return segmentos
 
@@ -40,69 +47,44 @@ def load_whisper():
 @st.cache_resource
 def load_kokoro():
     """
-    Baixa os dois arquivos necessários do HuggingFace para cache local,
-    e inicializa o Kokoro com a API real: Kokoro(model_path, voices_path).
-
-    Variantes disponíveis (trocar model_file conforme necessidade):
-      model.onnx             → fp32,  326 MB
-      model_fp16.onnx        → fp16,  163 MB
-      model_quantized.onnx   → int8,   92 MB  ← boa qualidade
-      model_q8f16.onnx       → q8f16,  86 MB  ← melhor custo-benefício
-      model_q4f16.onnx       → q4f16, 154 MB
+    1. Baixa o modelo ONNX quantizado (q8f16 = 86 MB) do HuggingFace
+    2. Baixa cada voz PT-BR como .bin individual (~512 KB cada)
+    3. Consolida os .bin num único .npz que o kokoro-onnx consegue ler
+    4. Inicializa Kokoro(model_path, voices_npz_path)
     """
-    model_file = "model_q8f16.onnx"   # ← troque aqui para testar outras variantes
 
+    # 1. Modelo quantizado
     model_path = hf_hub_download(
-        repo_id="onnx-community/Kokoro-82M-v1.0-ONNX",
-        filename=f"onnx/{model_file}",
+        repo_id=REPO_ID,
+        filename="onnx/model_q8f16.onnx",   # 86 MB — melhor custo-benefício
     )
-    voices_path = hf_hub_download(
-        repo_id="onnx-community/Kokoro-82M-v1.0-ONNX",
-        filename="voices/voices.bin",
-    )
-    return Kokoro(model_path=model_path, voices_path=voices_path)
 
-# ── Recursos servidor ──────────────────────────────────────────────────────────
+    # 2. Baixar cada .bin de voz PT-BR
+    vozes_arrays = {}
+    for nome_voz in VOZES_PTBR.values():
+        bin_path = hf_hub_download(
+            repo_id=REPO_ID,
+            filename=f"voices/{nome_voz}.bin",
+        )
+        # Cada .bin é uma matriz float32 de shape (N, 1, 256)
+        # N = número de tamanhos de sequência suportados (até 510)
+        arr = np.fromfile(bin_path, dtype=np.float32).reshape(-1, 1, 256)
+        vozes_arrays[nome_voz] = arr
 
-def server_resource():
-    # Coleta dados do processo atual do Python
-    processo = psutil.Process()
-    memoria_uso_bytes = processo.memory_info().rss
-    memoria_uso_mb = memoria_uso_bytes / (1024 * 1024)
+    # 3. Consolidar num .npz para que np.load() retorne objeto indexável por string
+    npz_path = "/tmp/kokoro_voices_ptbr.npz"
+    np.savez(npz_path, **vozes_arrays)
 
-    # Coleta uso de CPU do sistema/processo
-    cpu_uso = psutil.cpu_percent(interval=0.1)
-    
-    # Get complete system memory statistics
-    memory = psutil.virtual_memory()
-
-    # Convert bytes to Gigabytes (GB) for easy reading
-    gb = 1024 ** 3
-
-    st.sidebar.write(f"💾 Memória RAM Usada {memoria_uso_mb:.2f} MB")
-    st.sidebar.write(f"🏿 Uso de CPU {cpu_uso:.1f}%")
-
-
-    st.sidebar.write(f"Total RAM:       {memory.total:.2f} GB")
-    st.sidebar.write(f"Total RAM:       {memory.total / gb:.2f} GB")
-    st.sidebar.write(f"Available RAM:   {memory.available / gb:.2f} GB")
-    st.sidebar.write(f"Used RAM:        {memory.used / gb:.2f} GB")
-    st.sidebar.write(f"Free RAM:        {memory.free / gb:.2f} GB")
-    st.sidebar.write(f"RAM Usage:       {memory.percent}%")
+    # 4. Inicializar com a API real do kokoro-onnx
+    return Kokoro(model_path=model_path, voices_path=npz_path)
 
 # ── Interface ─────────────────────────────────────────────────────────────────
-st.title("🎙️ Chatbot de Voz (Faster-Whisper + Kokoro ONNX)")
+st.title("🎙️ Chatbot de Voz (Faster-Whisper + Kokoro ONNX q8f16)")
 st.sidebar.header("⚙️ Configurações")
 
-opcoes_vozes = {
-    "Dora (Feminina - PT-BR)":          "pf_dora",
-    "Alex (Masculino - PT-BR)":         "pm_alex",
-    "Santa (Masculino - PT-BR)":        "pm_santa",
-}
-voz_label = st.sidebar.selectbox("Voz:", list(opcoes_vozes.keys()))
-id_voz = opcoes_vozes[voz_label]
+voz_label = st.sidebar.selectbox("Voz:", list(VOZES_PTBR.keys()))
+id_voz    = VOZES_PTBR[voz_label]
 st.write(f"Voz: **{voz_label}**")
-server_resource()
 
 audio_file = st.audio_input("🎤 Clique para falar")
 
@@ -116,7 +98,7 @@ if audio_file is not None:
     try:
         # --- TRANSCRIÇÃO ---
         with st.spinner("🤖 Transcrevendo..."):
-            whisper = load_whisper()
+            whisper  = load_whisper()
             segments, _ = whisper.transcribe(
                 filename,
                 language="pt",
@@ -136,22 +118,14 @@ if audio_file is not None:
 
         # --- SÍNTESE ONNX EXPRESSIVA ---
         with st.spinner("🗣️ Gerando áudio..."):
-            kokoro = load_kokoro()
-
-            # Verifica se a voz PT-BR existe; fallback para inglês se não existir
-            vozes_disponiveis = kokoro.get_voices()
-            voz_final = id_voz if id_voz in vozes_disponiveis else "af_heart"
-            if voz_final != id_voz:
-                st.warning(f"Voz '{id_voz}' não encontrada. Usando '{voz_final}'.")
-
+            kokoro   = load_kokoro()
             resposta = f"Você disse: {texto}."
-            segmentos = preparar_segmentos(resposta)
+            chunks   = []
 
-            chunks = []
-            for seg in segmentos:
-                audio_seg, sr = kokoro.create(
+            for seg in preparar_segmentos(resposta):
+                audio_seg, _ = kokoro.create(
                     seg["texto"],
-                    voice=voz_final,
+                    voice=id_voz,
                     speed=seg["speed"],
                     lang="pt-br",
                 )
