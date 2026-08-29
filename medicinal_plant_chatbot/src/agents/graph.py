@@ -388,7 +388,9 @@ def construir_grafo(dependencias: Dependencias):
                     "tokens_entrada": resposta_llm.tokens_entrada,
                     "tokens_saida": resposta_llm.tokens_saida,"caracteres_trechos_recuperados": len(
                         formatar_trechos_para_prompt(todos_trechos)
-                        ),
+                        ), # DEBUG TEMPORÁRIO — ver o prompt real enviado ao LLM.
+                    "tamanho_prompt_caracteres": len(prompt),
+                    "prompt_enviado": prompt,
                 },
             ),
             historico=estado.get("historico_observabilidade"),
