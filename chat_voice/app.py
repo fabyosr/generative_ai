@@ -180,15 +180,14 @@ if audio_file is not None:
 
             # ── Síntese de voz ────────────────────────────────────────────
             with st.spinner("🗣️ Gerando áudio..."):
-                kokoro_instance = load_kokoro()
-                kokoro_instance._create_audio = types.MethodType(kokoro_instance)
+                kokoro = load_kokoro()
                 resposta = f"Você disse: {texto}."
                 chunks   = []
                 st.write('load kokoro')
                 print('load kokoro')
 
                 for seg in preparar_segmentos(resposta):
-                    audio_seg, _ = kokoro_instance.create(
+                    audio_seg, _ = kokoro.create(
                         seg["texto"],
                         voice=id_voz,
                         speed=seg["speed"],
