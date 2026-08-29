@@ -36,7 +36,11 @@ import anthropic
 from openai import OpenAI
 
 from core.models import RespostaLLM
+from anthropic import RateLimitError as AnthropicRateLimitError
+from openai import RateLimitError as OpenAIRateLimitError
 
+class LimiteDeUsoExcedido(Exception):
+    """Limite de tokens/requisições do provedor de LLM foi atingido."""
 
 class AnthropicLLMClient:
     """Client para modelos Claude via SDK oficial da Anthropic."""
@@ -49,12 +53,16 @@ class AnthropicLLMClient:
 
     def gerar(self, prompt: str, **kwargs: object) -> RespostaLLM:
         max_tokens = kwargs.pop("max_tokens", 1024)
-        resposta = self._client.messages.create(
-            model=self._model,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-            **kwargs,
-        )
+        try:
+            resposta = self._client.messages.create(
+                model=self._model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs,
+            )
+        except AnthropicRateLimitError as e:
+            raise LimiteDeUsoExcedido(str(e)) from e
+
         return RespostaLLM(
             texto=resposta.content[0].text,
             tokens_entrada=getattr(resposta.usage, "input_tokens", None),
@@ -84,11 +92,15 @@ class OpenAICompatibleLLMClient:
         self._model = model
 
     def gerar(self, prompt: str, **kwargs: object) -> RespostaLLM:
-        resposta = self._client.chat.completions.create(
-            model=self._model,
-            messages=[{"role": "user", "content": prompt}],
-            **kwargs,
-        )
+        try:
+            resposta = self._client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+                **kwargs,
+            )
+        except OpenAIRateLimitError as e:
+            raise LimiteDeUsoExcedido(str(e)) from e
+            
         uso = resposta.usage
         return RespostaLLM(
             texto=resposta.choices[0].message.content,
