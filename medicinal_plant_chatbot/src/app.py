@@ -202,7 +202,7 @@ def _renderizar_sidebar() -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _renderizar_envelope(envelope) -> None:
+def _renderizar_envelope(envelope, autoplay: bool = False) -> None:
     st.write(envelope.texto_resposta)
     for imagem in envelope.imagens:
         if not imagem.presente:
@@ -212,7 +212,7 @@ def _renderizar_envelope(envelope) -> None:
             legenda += " ⚠️ baixa confiança"
         st.image(imagem.url_ou_ref, caption=legenda, width=250)
     if envelope.audio.presente and envelope.audio.ref:
-        st.audio(envelope.audio.ref, format="audio/wav", key=f"audio_turno_{st.session_state.numero_turno_sessao}", autoplay=True)
+        st.audio(envelope.audio.ref, autoplay=autoplay)
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +272,7 @@ def _renderizar_aba_chat(config: dict) -> None:
                 st.error(f"Ocorreu um erro ao processar sua mensagem: {e}")
                 return
 
-        _renderizar_envelope(envelope)
+        _renderizar_envelope(envelope, autoplay=True)
 
     st.session_state.mensagens.append(
         {"role": "assistant", "content": envelope.texto_resposta, "envelope": envelope}
