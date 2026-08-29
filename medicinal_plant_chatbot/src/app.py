@@ -33,6 +33,7 @@ from config import constants, settings
 from observability.logger import get_logger
 from tools.dual_encoder import DualEncoderService
 from tools.llm import criar_llm_client
+from tools.llm import LimiteDeUsoExcedido
 from tools.rag import RAGService
 from tools.search import TavilySearchService, WikipediaSearchService
 from tools.tts import KokoroTTSService
@@ -221,12 +222,14 @@ def _renderizar_envelope(envelope, autoplay: bool = False) -> None:
 
 
 def _renderizar_aba_chat(config: dict) -> None:
-    for msg in st.session_state.mensagens:
-        with st.chat_message(msg["role"]):
-            if msg.get("envelope"):
-                _renderizar_envelope(msg["envelope"])
-            else:
-                st.write(msg["content"])
+    historico = st.container(height=500)
+    with historico:
+        for msg in st.session_state.mensagens:
+            with st.chat_message(msg["role"]):
+                if msg.get("envelope"):
+                    _renderizar_envelope(msg["envelope"])
+                else:
+                    st.write(msg["content"])
 
     prompt = st.chat_input("Pergunte sobre plantas medicinais...")
     if not prompt:
@@ -241,12 +244,12 @@ def _renderizar_aba_chat(config: dict) -> None:
         return
 
     st.session_state.mensagens.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.write(prompt)
-
     st.session_state.numero_turno_sessao += 1
 
-    with st.chat_message("assistant"):
+    with historico, st.chat_message("user"):
+        st.write(prompt)
+
+    with historico, st.chat_message("assistant"):
         with st.spinner("Pensando..."):
             try:
                 dependencias = _montar_dependencias(
