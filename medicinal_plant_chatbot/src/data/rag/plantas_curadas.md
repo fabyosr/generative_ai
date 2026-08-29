@@ -171,7 +171,7 @@ Extraído das flores da camomila, esse óleo ganhou destaque tanto na medicina n
 
 Hoje, a ciência observa com mais atenção aquilo que o uso tradicional já sugeria havia muito tempo. O óleo de camomila concentra substâncias ligadas a ações calmantes, anti-inflamatórias, antioxidantes e reconfortantes Para a pele e Para o sistema nervoso. Para entender onde ele realmente se destaca, vale olhar com calma para sua composição, seus usos práticos, seus cuidados e o que torna esse óleo tão presente em rotinas de bem-estar.
 
-# O Que é o Óleo de Camomila?
+## O Que é o Óleo de Camomila?
 O óleo de camomila é um extrato aromático obtido das flores da camomila, planta bastante conhecida pelo uso em chás, compressas e fórmulas cosméticas. No caso do óleo essencial, a concentração dos compostos é muito maior do que na infusão tradicional. Por isso, ele costuma ser usado em pequenas quantidades e com finalidade mais específica, seja no cuidado da pele, no relaxamento ou em aplicações tópicas diluídas.
 
 As duas espécies mais associadas a esse óleo são a camomila-romana e a camomila-alemã. A primeira é mais lembrada pelo perfil relaxante e pelo aroma suave, enquanto a segunda costuma ser associada a um uso mais intenso em fórmulas calmantes Para a pele e em situações ligadas a inflamação. Embora a base terapêutica seja semelhante, o comportamento de cada óleo no uso prático apresenta nuances importantes.

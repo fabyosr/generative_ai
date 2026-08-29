@@ -268,6 +268,19 @@ def construir_grafo(dependencias: Dependencias):
                             metadados_extra={
                                 "tipo": "planta_nomeada",
                                 "planta": planta.nome_popular,
+                                # DEBUG TEMPORÁRIO — remover após
+                                # diagnóstico de volume de tokens do RAG.
+                                "volume_por_secao": [
+                                    {
+                                        "secao": t.fonte_citacao,
+                                        "caracteres": len(t.texto),
+                                        "palavras": len(t.texto.split()),
+                                    }
+                                    for t in trechos
+                                ],
+                                "total_caracteres_trechos": sum(
+                                    len(t.texto) for t in trechos
+                                ),
                             },
                         ),
                         historico=historico_obs,
@@ -331,7 +344,16 @@ def construir_grafo(dependencias: Dependencias):
                         metadados_extra={
                             "tipo": "busca_por_atributo",
                             "planta_identificada": resultado_id.planta.nome_popular,
-                            "abaixo_do_limiar": abaixo,
+                            "abaixo_do_limiar": abaixo,# DEBUG TEMPORÁRIO — mesmo propósito do outro branch.
+                            "volume_por_secao": [
+                                {
+                                    "secao": t.fonte_citacao,
+                                    "caracteres": len(t.texto),
+                                    "palavras": len(t.texto.split()),
+                                }
+                                for t in trechos
+                            ],
+                            "total_caracteres_trechos": sum(len(t.texto) for t in trechos),
                         },
                     ),
                     historico=historico_obs,
@@ -364,7 +386,9 @@ def construir_grafo(dependencias: Dependencias):
                 metadados_extra={
                     "modelo": resposta_llm.modelo,
                     "tokens_entrada": resposta_llm.tokens_entrada,
-                    "tokens_saida": resposta_llm.tokens_saida,
+                    "tokens_saida": resposta_llm.tokens_saida,"caracteres_trechos_recuperados": len(
+                        formatar_trechos_para_prompt(todos_trechos)
+                        ),
                 },
             ),
             historico=estado.get("historico_observabilidade"),
