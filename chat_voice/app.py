@@ -46,34 +46,6 @@ def preparar_segmentos(texto: str) -> list[dict]:
         segmentos.append({"texto": s, "speed": speed, "pausa_ms": pausa_ms})
     return segmentos
 
-def _create_audio_fixed(self, phonemes, voice, speed):
-    import time
-    from kokoro_onnx.config import MAX_PHONEME_LENGTH, SAMPLE_RATE
-    import numpy as np
-
-    phonemes = phonemes[:MAX_PHONEME_LENGTH]
-    start_t  = time.time()
-    tokens   = np.array(self.tokenizer.tokenize(phonemes), dtype=np.int64)
-    voice    = voice[len(tokens)]
-    tokens   = [[0, *tokens, 0]]
-
-    input_names = [i.name for i in self.sess.get_inputs()]
-    if "input_ids" in input_names:
-        inputs = {
-            "input_ids": tokens,
-            "style": np.array(voice, dtype=np.float32),
-            "speed": np.array([speed], dtype=np.float32),  # ← corrigido: float32
-        }
-    else:
-        inputs = {
-            "tokens": tokens,
-            "style": voice,
-            "speed": np.ones(1, dtype=np.float32) * speed,
-        }
-
-    audio = self.sess.run(None, inputs)[0]
-    return audio, SAMPLE_RATE
-
 # ── Carregamento dos modelos ──────────────────────────────────────────────────
 @st.cache_resource
 def load_whisper():
@@ -81,41 +53,30 @@ def load_whisper():
 
 @st.cache_resource
 def load_kokoro():
-    #model_path = hf_hub_download(repo_id=REPO_ID, filename="onnx/model_q8f16.onnx")
-    model_path = hf_hub_download(
-        repo_id=REPO_ID,
-        filename="onnx/model_quantized.onnx",  # int8 puro — 92 MB, sem restrição de CPU
-        )
+    from kokoro_onnx import Kokoro
+    from kokoro_onnx.session import create_session
 
+    model_path = hf_hub_download(repo_id=REPO_ID, filename="onnx/model_quantized.onnx")
+
+    # Baixar vozes PT-BR e consolidar num .npz
     vozes_arrays = {}
     for nome_voz in VOZES_PTBR.values():
         bin_path = hf_hub_download(repo_id=REPO_ID, filename=f"voices/{nome_voz}.bin")
         vozes_arrays[nome_voz] = np.fromfile(bin_path, dtype=np.float32).reshape(-1, 1, 256)
 
-    print('passou 1')
+    # Salvar no diretório do próprio app — gravável no Streamlit Community
+    # e persistente dentro da mesma sessão do worker (ao contrário do /tmp)
+    voices_npz_path = os.path.join(os.path.dirname(__file__), "voices_ptbr.npz")
+    np.savez(voices_npz_path, **vozes_arrays)
 
-    buf = io.BytesIO()
-    np.savez(buf, **vozes_arrays)
-    buf.seek(0)
-    print('passou 2')
-
-    # SessionOptions com otimização básica — evita que o runtime
-    # tente usar fp16 nativo ausente na CPU do Streamlit Community
+    # from_session chama _setup corretamente -- inicializa _tokens_input,
+    # _input_dtypes, _stops, _spaces e todos os atributos necessários
     opts = rt.SessionOptions()
-    opts.intra_op_num_threads        = 2
-    opts.graph_optimization_level    = rt.GraphOptimizationLevel.ORT_ENABLE_BASIC
+    opts.intra_op_num_threads     = 2
+    opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_BASIC
 
-    instance           = Kokoro.__new__(Kokoro)
-    print('passou 3')
-    instance.sess = rt.InferenceSession( model_path, sess_options=opts, providers=["CPUExecutionProvider"] )
-    print('passou 4')
-    instance.voices    = np.load(buf)
-    print('passou 5')
-    instance.tokenizer = Tokenizer(espeak_config=None, vocab={})
-    st.write('carregou kokoro')
-    print('carregou kokoro')
-    return instance
-
+    session = create_session(model_path)
+    return Kokoro.from_session(session, voices_path=voices_npz_path)
 # ── Recursos servidor ──────────────────────────────────────────────────────────
 
 def server_resource():
@@ -220,7 +181,7 @@ if audio_file is not None:
             # ── Síntese de voz ────────────────────────────────────────────
             with st.spinner("🗣️ Gerando áudio..."):
                 kokoro_instance = load_kokoro()
-                kokoro_instance._create_audio = types.MethodType(_create_audio_fixed, kokoro_instance)
+                kokoro_instance._create_audio = types.MethodType(kokoro_instance)
                 resposta = f"Você disse: {texto}."
                 chunks   = []
                 st.write('load kokoro')
