@@ -212,7 +212,7 @@ def _renderizar_envelope(envelope) -> None:
             legenda += " ⚠️ baixa confiança"
         st.image(imagem.url_ou_ref, caption=legenda, width=250)
     if envelope.audio.presente and envelope.audio.ref:
-        st.audio(envelope.audio.ref, autoplay=True)
+        st.audio(envelope.audio.ref, , format="audio/wav", key=f"audio_turno_{st.session_state.numero_turno_sessao}", autoplay=True)
 
 
 # ---------------------------------------------------------------------------
