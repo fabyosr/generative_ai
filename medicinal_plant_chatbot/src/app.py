@@ -222,7 +222,7 @@ def _renderizar_envelope(envelope, autoplay: bool = False) -> None:
 
 
 def _renderizar_aba_chat(config: dict) -> None:
-    historico = st.container(height=500)
+    historico = st.container(height=400)
     with historico:
         for msg in st.session_state.mensagens:
             with st.chat_message(msg["role"]):
