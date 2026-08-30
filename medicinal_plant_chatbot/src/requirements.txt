@@ -38,6 +38,7 @@ wikipedia
 
 # Observabilidade (LangSmith — rastro técnico automático via LangGraph)
 langsmith
+pandas
 
 # Testes
 pytest
