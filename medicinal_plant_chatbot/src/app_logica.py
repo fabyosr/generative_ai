@@ -11,6 +11,7 @@ não por camada arquitetural formal.
 
 from __future__ import annotations
 
+import pandas as pd
 
 def calcular_historico_resumido(mensagens: list[dict], n_ultimas: int = 3) -> str:
     """Simplificação de MVP: concatena as últimas N trocas em vez de um
@@ -57,3 +58,75 @@ def extrair_planta_principal(envelope) -> str | None:
         if imagem.presente and imagem.planta_identificada:
             return imagem.planta_identificada
     return None
+
+def construir_tabela_observabilidade(
+    mensagens: list[dict],
+    eventos: list,
+    precos_por_modelo: dict[str, tuple[float, float]],
+) -> pd.DataFrame:
+    """Agrega eventos (granularidade por etapa) e mensagens (conteúdo)
+    em uma linha por turno, para exibição tabular.
+
+    Só gera linha para turnos com eventos associados — a mensagem de
+    boas-vindas inicial (sem numero_turno_sessao) é ignorada.
+    """
+    eventos_por_turno: dict[int, list] = {}
+    for evento in eventos:
+        turno = getattr(evento, "numero_turno_sessao", None)
+        if turno is None:
+            continue
+        eventos_por_turno.setdefault(turno, []).append(evento)
+
+    pares: list[tuple[str, str]] = []
+    pendente_usuario: str | None = None
+    for msg in mensagens:
+        if msg["role"] == "user":
+            pendente_usuario = msg["content"]
+        elif msg["role"] == "assistant" and pendente_usuario is not None:
+            pares.append((pendente_usuario, msg["content"]))
+            pendente_usuario = None
+
+    linhas = []
+    for i, turno in enumerate(sorted(eventos_por_turno)):
+        tokens_entrada = tokens_saida = 0
+        latencia_total_ms = 0.0
+        modelo = None
+        guardrail_escopo_bloqueou = guardrail_saida_bloqueou = False
+        clareza_mensagem = None
+
+        for ev in eventos_por_turno[turno]:
+            latencia_total_ms += ev.latencia_ms or 0.0
+            extra = ev.metadados_extra or {}
+            tokens_entrada += extra.get("tokens_entrada") or 0
+            tokens_saida += extra.get("tokens_saida") or 0
+            modelo = extra.get("modelo") or modelo
+            if ev.etapa == "verificar_escopo" and extra.get("dentro_do_escopo") is False:
+                guardrail_escopo_bloqueou = True
+            if ev.etapa == "avaliar_saida" and extra.get("aprovado") is False:
+                guardrail_saida_bloqueou = True
+            if ev.etapa == "extrair_intencao":
+                clareza_mensagem = extra.get("clareza_mensagem")
+
+        preco_in, preco_out = precos_por_modelo.get(modelo, (None, None))
+        custo_usd = (
+            (tokens_entrada / 1_000_000) * preco_in + (tokens_saida / 1_000_000) * preco_out
+            if preco_in is not None else None
+        )
+        prompt_usuario, resposta_llm = pares[i] if i < len(pares) else ("", "")
+
+        linhas.append({
+            "turno": turno,
+            "prompt_usuario": prompt_usuario,
+            "resposta_llm": resposta_llm,
+            "modelo": modelo,
+            "clareza_mensagem": clareza_mensagem,
+            "escopo_bloqueou": guardrail_escopo_bloqueou,
+            "saida_bloqueou": guardrail_saida_bloqueou,
+            "tokens_entrada": tokens_entrada,
+            "tokens_saida": tokens_saida,
+            "tokens_totais": tokens_entrada + tokens_saida,
+            "latencia_s": round(latencia_total_ms / 1000, 2),
+            "custo_usd": round(custo_usd, 6) if custo_usd is not None else None,
+        })
+
+    return pd.DataFrame(linhas)

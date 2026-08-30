@@ -22,12 +22,15 @@ import sys
 # sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
+import uuid
+import pandas as pd
 
 from agents.graph import Dependencias, construir_grafo
 from app_logica import (
     calcular_historico_resumido,
     calcular_novo_turno_topico,
     extrair_planta_principal,
+    construir_tabela_observabilidade,
 )
 from config import constants, settings
 from observability.logger import get_logger
@@ -49,6 +52,16 @@ MODELOS_PADRAO_POR_PROVEDOR = {
     "anthropic": "claude-sonnet-5",
     "xai": "grok-2-latest",
 }
+
+TEXTO_BOAS_VINDAS = (
+    "Olá! Sou um assistente educacional sobre plantas medicinais — "
+    "converso sobre alho, sete-sangrias, hibisco, gengibre, carqueja e "
+    "camomila, além de fitoterapia em geral. Não substituo orientação "
+    "médica, mas posso ajudar a entender usos tradicionais e "
+    "contraindicações documentadas. Pode perguntar pelo nome de uma "
+    "planta, ou descrever o que procura — por exemplo, \"algo para "
+    "dormir melhor\"."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +106,10 @@ def _montar_dependencias(provedor: str, api_key: str, model: str) -> Dependencia
 # Estado de sessão
 # ---------------------------------------------------------------------------
 
-
 def _inicializar_estado_sessao() -> None:
     padroes = {
-        "mensagens": [],
+        "sessao_id": str(uuid.uuid4()),
+        "mensagens": [{"role": "assistant", "content": TEXTO_BOAS_VINDAS}],
         "numero_turno_sessao": 0,
         "numero_turno_topico": 0,
         "planta_topico_atual": None,
@@ -257,6 +270,7 @@ def _renderizar_aba_chat(config: dict) -> None:
                 )
                 grafo = construir_grafo(dependencias)
                 estado_inicial = {
+                    "sessao_id": st.session_state.sessao_id,
                     "mensagem_usuario": prompt,
                     "historico_resumido": calcular_historico_resumido(
                         st.session_state.mensagens
@@ -268,7 +282,7 @@ def _renderizar_aba_chat(config: dict) -> None:
                     "voz_selecionada": config["voz_selecionada"],
                     "historico_observabilidade": st.session_state.eventos_observabilidade,
                 }
-                resultado = grafo.invoke(estado_inicial)
+                resultado = grafo.invoke(estado_inicial, config={"metadata": {"sessao_id": st.session_state.sessao_id}},)
                 envelope = resultado["envelope_resposta"]
             except Exception as e:
                 _logger.exception("Erro ao processar mensagem do usuário")
@@ -311,6 +325,19 @@ def _renderizar_aba_observabilidade() -> None:
         "Latência total (ms)",
         round(sum(e.latencia_ms or 0 for e in eventos)),
     )
+
+    # tabela dataframe
+
+    st.divider()
+    st.caption("Tabela por turno — uma linha por mensagem trocada.")
+    tabela = construir_tabela_observabilidade(
+        st.session_state.mensagens, eventos, PRECOS_POR_MODELO_USD_POR_MILHAO,
+    )
+    if not tabela.empty:
+        st.metric("Custo estimado da sessão (USD)", f"${tabela['custo_usd'].sum(skipna=True):.4f}")
+        st.dataframe(tabela, use_container_width=True)
+
+    # expanders
 
     for evento in reversed(eventos[-30:]):
         titulo = f"{evento.etapa} — {evento.ferramenta_acionada or ''}"

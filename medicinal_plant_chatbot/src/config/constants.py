@@ -98,3 +98,16 @@ MAX_CARACTERES_MENSAGEM_USUARIO: int = 2000  # guardrail de entrada
 LIMITE_TURNOS_DESENVOLVIMENTO: int = 4  # a partir daqui, tende a "fechamento"
 LIMITE_TURNOS_FORCADO: int = 6          # teto rígido — força "fechamento_forcado"
                                           # independente de sinal_encerramento
+
+# Preços por milhão de tokens (USD), input/output — verificados em 30/08/2026.
+# Sem API de preços em tempo real; requer atualização manual periódica.
+PRECOS_POR_MODELO_USD_POR_MILHAO: dict[str, tuple[float, float]] = {
+    "gpt-4o-mini": (0.15, 0.60),
+    "claude-sonnet-5": (2.00, 10.00),
+    "openai/gpt-oss-120b": (0.0, 0.0),  # Groq free tier
+    "openai/gpt-oss-20b": (0.0, 0.0),   # Groq free tier
+    "qwen/qwen3.6-27b": (0.0, 0.0),     # Groq free tier
+    # "grok-2-latest": não encontrei preço atual confiável pra esse
+    # modelo específico (mais antigo) — confirme em https://x.ai/api
+    # antes de adicionar.
+}

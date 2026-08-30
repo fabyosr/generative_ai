@@ -137,8 +137,9 @@ def extrair_intencao(
             solicitacoes.append(Solicitacao(tipo=tipo, valor=valor))
 
     sinal_encerramento = bool(dados.get("sinal_encerramento", False))
+    clareza_mensagem = str(dados.get("clareza_mensagem", "esclarecedor"))
 
-    return tipo_mensagem, solicitacoes, sinal_encerramento, resposta_llm
+    return tipo_mensagem, solicitacoes, sinal_encerramento, clareza_mensagem, resposta_llm
 
 
 def normalizar_nome(texto: str) -> str:

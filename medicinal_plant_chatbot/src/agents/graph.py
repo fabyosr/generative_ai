@@ -105,6 +105,7 @@ class EstadoAgente(TypedDict, total=False):
     """
 
     # --- Entrada (fornecida por app.py a cada invocação) ---
+    sessao_id: str
     mensagem_usuario: str
     historico_resumido: str
     numero_turno_sessao: int
@@ -122,6 +123,7 @@ class EstadoAgente(TypedDict, total=False):
     solicitacoes: list  # list[Solicitacao]
     sinal_encerramento: bool
     estagio_conversa: str
+    clareza_mensagem: str
 
     # --- Populado por verificar_escopo ---
     dentro_do_escopo: bool
@@ -154,6 +156,12 @@ def construir_grafo(dependencias: Dependencias):
     via `.invoke(estado_inicial)`.
     """
 
+    def _contexto_obs(estado: EstadoAgente) -> dict:
+        return {
+            "sessao_id": estado.get("sessao_id"),
+            "numero_turno_sessao": estado.get("numero_turno_sessao"),
+        }
+
     # -----------------------------------------------------------------
     # Nós
     # -----------------------------------------------------------------
@@ -167,7 +175,7 @@ def construir_grafo(dependencias: Dependencias):
 
     def no_extrair_intencao(estado: EstadoAgente) -> dict:
         inicio = time.perf_counter()
-        tipo_mensagem, solicitacoes, sinal_encerramento, resposta_llm = extrair_intencao(
+        tipo_mensagem, solicitacoes, sinal_encerramento, clareza_mensagem, resposta_llm = extrair_intencao(
             estado["mensagem_usuario"],
             dependencias.llm,
             estado.get("historico_resumido", ""),
@@ -183,6 +191,7 @@ def construir_grafo(dependencias: Dependencias):
             _logger,
             EventoObservabilidade(
                 etapa="extrair_intencao",
+                **_contexto_obs(estado),
                 ferramenta_acionada="LLM",
                 latencia_ms=latencia_ms,
                 tokens_consumidos=_somar_tokens(resposta_llm),
@@ -190,6 +199,7 @@ def construir_grafo(dependencias: Dependencias):
                     "tipo_mensagem": tipo_mensagem.value,
                     "numero_solicitacoes": len(solicitacoes),
                     "estagio_conversa": estagio,
+                    "clareza_mensagem": clareza_mensagem,
                     "modelo": resposta_llm.modelo,
                     "tokens_entrada": resposta_llm.tokens_entrada,
                     "tokens_saida": resposta_llm.tokens_saida,
@@ -203,6 +213,7 @@ def construir_grafo(dependencias: Dependencias):
             "solicitacoes": solicitacoes,
             "sinal_encerramento": sinal_encerramento,
             "estagio_conversa": estagio,
+            "clareza_mensagem": clareza_mensagem,
         }
 
     def no_verificar_escopo(estado: EstadoAgente) -> dict:
@@ -216,6 +227,7 @@ def construir_grafo(dependencias: Dependencias):
             _logger,
             EventoObservabilidade(
                 etapa="verificar_escopo",
+                **_contexto_obs(estado),
                 ferramenta_acionada="LLM",
                 latencia_ms=(time.perf_counter() - inicio) * 1000,
                 tokens_consumidos=_somar_tokens(resultado.resposta_llm),
@@ -263,6 +275,7 @@ def construir_grafo(dependencias: Dependencias):
                         _logger,
                         EventoObservabilidade(
                             etapa="processar_solicitacao",
+                            **_contexto_obs(estado),
                             ferramenta_acionada="RAG",
                             latencia_ms=(time.perf_counter() - inicio) * 1000,
                             metadados_extra={
@@ -302,6 +315,7 @@ def construir_grafo(dependencias: Dependencias):
                         _logger,
                         EventoObservabilidade(
                             etapa="processar_solicitacao",
+                            **_contexto_obs(estado),
                             ferramenta_acionada="fallback_wikipedia_tavily",
                             latencia_ms=(time.perf_counter() - inicio) * 1000,
                             metadados_extra={
@@ -337,6 +351,7 @@ def construir_grafo(dependencias: Dependencias):
                     _logger,
                     EventoObservabilidade(
                         etapa="processar_solicitacao",
+                        **_contexto_obs(estado),
                         ferramenta_acionada="dual_encoder",
                         score=resultado_id.score_similaridade,
                         limiar_usado=limiar,
@@ -380,6 +395,7 @@ def construir_grafo(dependencias: Dependencias):
             _logger,
             EventoObservabilidade(
                 etapa="compor_resposta",
+                **_contexto_obs(estado),
                 ferramenta_acionada="LLM",
                 latencia_ms=(time.perf_counter() - inicio) * 1000,
                 tokens_consumidos=_somar_tokens(resposta_llm),
@@ -424,6 +440,7 @@ def construir_grafo(dependencias: Dependencias):
             _logger,
             EventoObservabilidade(
                 etapa="avaliar_saida",
+                **_contexto_obs(estado),
                 ferramenta_acionada="LLM",
                 score=avaliacao.groundedness_score,
                 latencia_ms=(time.perf_counter() - inicio) * 1000,
@@ -481,6 +498,30 @@ def construir_grafo(dependencias: Dependencias):
     def no_resposta_fora_de_escopo(estado: EstadoAgente) -> dict:
         return {"texto_resposta": estado["mensagem_redirecionamento"]}
 
+    def no_orientar_usuario(estado: EstadoAgente) -> dict:
+        prompt = (
+            carregar_prompt("orientar_usuario")
+            .replace("{{mensagem_usuario}}", estado["mensagem_usuario"])
+            .replace("{{clareza_mensagem}}", estado.get("clareza_mensagem", ""))
+            .replace("{{estagio_conversa}}", estado.get("estagio_conversa", "desenvolvimento"))
+            .replace("{{historico_resumido}}", estado.get("historico_resumido", "") or "(nenhum)")
+        )
+        inicio = time.perf_counter()
+        resposta_llm = dependencias.llm.gerar(prompt)
+        registrar_evento(
+            _logger,
+            EventoObservabilidade(
+                etapa="orientar_usuario",
+                **_contexto_obs(estado),
+                ferramenta_acionada="LLM",
+                latencia_ms=(time.perf_counter() - inicio) * 1000,
+                tokens_consumidos=_somar_tokens(resposta_llm),
+                metadados_extra={"clareza_mensagem": estado.get("clareza_mensagem")},
+            ),
+            historico=estado.get("historico_observabilidade"),
+        )
+        return {"texto_resposta": resposta_llm.texto}
+
     # -----------------------------------------------------------------
     # Arestas condicionais
     # -----------------------------------------------------------------
@@ -495,6 +536,11 @@ def construir_grafo(dependencias: Dependencias):
             else "resposta_fora_de_escopo"
         )
 
+    def rotear_apos_extracao(estado: EstadoAgente) -> str:
+        if estado.get("clareza_mensagem") in ("confuso", "sem_contexto"):
+            return "orientar_usuario"
+        return "verificar_escopo"
+
     # -----------------------------------------------------------------
     # Montagem do grafo
     # -----------------------------------------------------------------
@@ -503,6 +549,7 @@ def construir_grafo(dependencias: Dependencias):
 
     grafo.add_node("validar_entrada", no_validar_entrada)
     grafo.add_node("extrair_intencao", no_extrair_intencao)
+    grafo.add_node("orientar_usuario", no_orientar_usuario)
     grafo.add_node("verificar_escopo", no_verificar_escopo)
     grafo.add_node("processar_solicitacoes", no_processar_solicitacoes)
     grafo.add_node("compor_resposta", no_compor_resposta)
@@ -516,13 +563,14 @@ def construir_grafo(dependencias: Dependencias):
     grafo.set_entry_point("validar_entrada")
 
     grafo.add_conditional_edges("validar_entrada", rotear_apos_validacao)
-    grafo.add_edge("extrair_intencao", "verificar_escopo")
+    grafo.add_conditional_edges("extrair_intencao", rotear_apos_extracao)
     grafo.add_conditional_edges("verificar_escopo", rotear_apos_escopo)
 
     grafo.add_edge("processar_solicitacoes", "compor_resposta")
     grafo.add_edge("compor_resposta", "injetar_aviso")
     grafo.add_edge("injetar_aviso", "avaliar_saida")
     grafo.add_edge("avaliar_saida", "sintetizar_audio")
+    grafo.add_edge("orientar_usuario", "sintetizar_audio")
 
     # Fora de escopo pula extração de solicitações/geração/avaliação —
     # o texto já é o redirecionamento determinístico do guardrail, mas

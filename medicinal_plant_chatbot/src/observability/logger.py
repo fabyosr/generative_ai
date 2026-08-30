@@ -25,6 +25,8 @@ class EventoObservabilidade:
 
     etapa: str
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    sessao_id: str | None = None
+    numero_turno_sessao: int | None = None
     ferramenta_acionada: str | None = None
     score: float | None = None
     limiar_usado: float | None = None
@@ -83,6 +85,8 @@ def registrar_evento(
     logger em si.
     """
     partes = [
+        f"sessao_id={evento.sessao_id}",
+        f"turno={evento.numero_turno_sessao}",
         f"etapa={evento.etapa}",
         f"ferramenta={evento.ferramenta_acionada}",
         f"score={evento.score}",
