@@ -11,11 +11,12 @@ avaliação do projeto.
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 
 _PROMPTS_DIR = Path(__file__).parent
-
+_PADRAO_COMENTARIO_DOC = re.compile(r"\A<!--.*?-->\s*", re.DOTALL)
 
 @lru_cache(maxsize=None)
 def carregar_prompt(nome: str) -> str:
@@ -33,4 +34,10 @@ def carregar_prompt(nome: str) -> str:
             f"Prompt '{nome}' não encontrado em {caminho}. "
             f"Verifique se o arquivo '{nome}.md' existe em src/prompts/."
         )
-    return caminho.read_text(encoding="utf-8")
+    texto = caminho.read_text(encoding="utf-8")
+    # Remove o bloco de comentário de documentação do início do arquivo
+    # ANTES de qualquer substituição de variável — evita que a sintaxe
+    # de documentação ({{var}} usada só pra explicar, dentro de <!-- -->)
+    # seja confundida com a sintaxe real de template pelo .replace()
+    # dos chamadores.
+    return _PADRAO_COMENTARIO_DOC.sub("", texto, count=1)
