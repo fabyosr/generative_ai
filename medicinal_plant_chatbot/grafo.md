@@ -1,8 +1,4 @@
----
-config:
-  flowchart:
-    curve: linear
----
+```mermaid
 graph TD;
         __start__(<p>__start__</p>)
         validar_entrada(validar_entrada)
@@ -23,3 +19,4 @@ graph TD;
         classDef default fill:#f2f0ff,line-height:1.2
         classDef first fill-opacity:0
         classDef last fill:#bfb6fc
+```
