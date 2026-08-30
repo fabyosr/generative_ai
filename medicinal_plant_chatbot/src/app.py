@@ -331,7 +331,7 @@ def _renderizar_aba_observabilidade() -> None:
     st.divider()
     st.caption("Tabela por turno — uma linha por mensagem trocada.")
     tabela = construir_tabela_observabilidade(
-        st.session_state.mensagens, eventos, PRECOS_POR_MODELO_USD_POR_MILHAO,
+        st.session_state.mensagens, eventos, constants.PRECOS_POR_MODELO_USD_POR_MILHAO,
     )
     if not tabela.empty:
         st.metric("Custo estimado da sessão (USD)", f"${tabela['custo_usd'].sum(skipna=True):.4f}")
