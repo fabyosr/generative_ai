@@ -44,7 +44,7 @@ redirecionamento breve, respeitosa e clara.
   fora de escopo.
 - Mensagens de acompanhamento de uma conversa já em andamento sobre o
   domínio (ex.: "e sobre isso, tem mais alguma coisa?"), mesmo sem
-  repetir o tema explicitamente — use {{historico_resumido}} para
+  repetir o tema explicitamente — use o histórico resumido da sessão para
   avaliar isso com contexto, não isoladamente.
 
 # O QUE ESTÁ FORA DO ESCOPO
